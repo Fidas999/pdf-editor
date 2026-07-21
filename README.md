@@ -17,11 +17,12 @@ file, and multi-page exports larger than **1MB** are packed into a ZIP.
 - Zoom in / out from the toolbar.
 
 ### Edit existing PDF content
-- The PDF opens with its **original look** (no automatic rebuild that breaks layout).
-- **Erase** — cover text, lines, logos or images you want removed.
-- **Detetar texto** — optional: shows faint selectable regions; **double-click** one
-  to edit that area (white cover + editable text with bold/size when available).
-- Add new text, shapes, tables and images on top.
+- On open, the page is **converted to editable objects**:
+  - **Text** → editable text (bold/size when available)
+  - **Lines / rules** → editable lines
+  - **Images / logos** → editable images
+- If PDF text encoding is broken, that region is kept as an **image crop** (same look) so you can still move/delete it; **double-click** to turn it into real editable text (OCR on that box only).
+- Select, drag, resize, delete; use toolbar tools to add more content.
 - Export as PDF (per page), PNG or JPEG (ZIP if total &gt; 1MB).
 
 ### Editing tools

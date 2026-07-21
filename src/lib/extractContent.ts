@@ -1,4 +1,4 @@
-import { Rect, IText, type FabricObject, type Canvas } from "fabric";
+import { Rect, IText, FabricImage, type FabricObject, type Canvas } from "fabric";
 import { PDFDocument } from "pdf-lib";
 import type { PDFPageProxy } from "pdfjs-dist";
 import { pdfjsLib, DESIGN_SCALE } from "./pdf";
@@ -6,8 +6,11 @@ import { tag, type ObjectKind } from "./createObject";
 import {
   hasHeavyMojibake,
   styleFromFontName,
+  textQualityScore,
   type TextStyle,
 } from "./textStyle";
+import { ocrRegion } from "./ocrPage";
+import { buildLineAndImageObjects } from "./extractPageObjects";
 
 type Tagged = FabricObject & {
   kind?: ObjectKind;
@@ -145,12 +148,14 @@ export function mergeLineItems(items: ExtractedItem[]): ExtractedItem[] {
 }
 
 /**
- * Nearly-invisible hit boxes over PDF text. Does NOT cover the original page.
- * Double-click a box to replace that region with editable text.
+ * Invisible hit boxes over PDF text. Does NOT cover or alter the original page.
+ * Double-click a box to edit that region only.
  */
 export async function createTextHitBoxes(
-  page: PDFPageProxy
+  page: PDFPageProxy,
+  options?: { visible?: boolean }
 ): Promise<FabricObject[]> {
+  const visible = options?.visible ?? false;
   const viewport = page.getViewport({ scale: DESIGN_SCALE });
   const pageW = viewport.width;
   const pageH = viewport.height;
@@ -163,17 +168,18 @@ export async function createTextHitBoxes(
 
   for (const item of merged) {
     if (isJunkBox(item.width, item.height, pageW, pageH)) continue;
-    // Skip obviously broken strings for the "guess" label, but keep the hit
-    // so the user can still retype over that area.
     const hit = new Rect({
-      left: item.left,
-      top: item.top,
-      width: Math.max(8, item.width),
-      height: Math.max(8, item.height),
-      fill: "rgba(59, 130, 246, 0.05)",
-      stroke: "rgba(59, 130, 246, 0)",
+      left: item.left - 1,
+      top: item.top - 1,
+      width: Math.max(10, item.width + 2),
+      height: Math.max(10, item.height + 2),
+      // Fully transparent until selected / "Detetar texto" — page stays clean.
+      fill: visible ? "rgba(59, 130, 246, 0.08)" : "rgba(0, 0, 0, 0)",
+      stroke: visible ? "rgba(59, 130, 246, 0.35)" : "rgba(0, 0, 0, 0)",
       strokeWidth: 1,
       hoverCursor: "text",
+      // Easier to hit thin lines of text
+      padding: 2,
     });
     const tagged = hit as Tagged;
     tagged.extractedText = item.text;
@@ -190,15 +196,41 @@ export async function createTextHitBoxes(
 
 /**
  * Replace a hit-box with whiteout + editable IText (only that region).
+ * If PDF extraction looks garbled, OCR just this region from the rendered page.
  */
-export function activatePdfTextHit(canvas: Canvas, hit: FabricObject): IText {
+export async function activatePdfTextHit(
+  canvas: Canvas,
+  hit: FabricObject,
+  bgCanvas?: HTMLCanvasElement | null,
+  onStatus?: (msg: string | null) => void
+): Promise<IText> {
   const bound = hit.getBoundingRect();
   const tagged = hit as Tagged;
   const fontSize = tagged.fontSizeHint ?? Math.max(10, bound.height * 0.7);
-  const guess = tagged.extractedText ?? "";
+  let initial = tagged.extractedText ?? "";
   const looksBroken =
-    /[\uFFFD□]/.test(guess) || hasHeavyMojibake(guess) || guess.length === 0;
-  const initial = looksBroken ? "" : guess;
+    !initial.trim() ||
+    /[\uFFFD□]/.test(initial) ||
+    hasHeavyMojibake(initial);
+
+  if (looksBroken && bgCanvas) {
+    onStatus?.("A ler o texto desta zona…");
+    try {
+      const ocrText = await ocrRegion(
+        bgCanvas,
+        bound.left,
+        bound.top,
+        bound.width,
+        bound.height
+      );
+      if (ocrText) initial = ocrText;
+      else initial = "";
+    } catch (err) {
+      console.warn("OCR da zona falhou", err);
+      initial = "";
+    }
+    onStatus?.(null);
+  }
 
   const cover = new Rect({
     left: bound.left - 1,
@@ -212,7 +244,7 @@ export function activatePdfTextHit(canvas: Canvas, hit: FabricObject): IText {
   });
   tag(cover, "erase");
 
-  const text = new IText(initial || "", {
+  const text = new IText(initial, {
     left: bound.left,
     top: bound.top,
     fontSize,
@@ -241,6 +273,46 @@ export function activatePdfTextHit(canvas: Canvas, hit: FabricObject): IText {
   if (initial) editable.selectAll();
 
   return text;
+}
+
+export function setHitBoxesVisible(canvas: Canvas, visible: boolean) {
+  for (const o of canvas.getObjects()) {
+    if (getContentKind(o) !== "pdfTextHit") continue;
+    o.set({
+      fill: visible ? "rgba(59, 130, 246, 0.08)" : "rgba(0, 0, 0, 0)",
+      stroke: visible ? "rgba(59, 130, 246, 0.35)" : "rgba(0, 0, 0, 0)",
+    });
+  }
+  canvas.requestRenderAll();
+}
+
+export function findPdfTextHitAt(
+  canvas: Canvas,
+  x: number,
+  y: number
+): FabricObject | undefined {
+  const point = { x, y };
+  // Top-most hit first
+  const hits = canvas
+    .getObjects()
+    .filter((o) => getContentKind(o) === "pdfTextHit")
+    .reverse();
+  for (const o of hits) {
+    if (o.containsPoint(point as never)) return o;
+  }
+  // Fallback: bounding-box hit with small padding
+  for (const o of hits) {
+    const b = o.getBoundingRect();
+    if (
+      x >= b.left - 2 &&
+      x <= b.left + b.width + 2 &&
+      y >= b.top - 2 &&
+      y <= b.top + b.height + 2
+    ) {
+      return o;
+    }
+  }
+  return undefined;
 }
 
 export async function extractFormFields(
@@ -366,4 +438,149 @@ export function getContentKind(obj: FabricObject): ObjectKind | undefined {
 
 export function tagContent(obj: FabricObject, kind: ObjectKind) {
   return tag(obj, kind);
+}
+
+/**
+ * Convert page content into editable Fabric objects:
+ * - Text → editable IText (OCR only for that box if encoding is broken)
+ * - Bad-encoding text fallback → image crop of the glyphs (still movable/deletable)
+ * - Lines / rules → editable Line
+ * - Embedded images → editable Image
+ *
+ * Each object gets a white cover so the original PDF drawing underneath is hidden.
+ * Does NOT run full-page OCR (that previously broke barcodes/layout).
+ */
+export async function convertPageToEditable(
+  page: PDFPageProxy,
+  bgCanvas: HTMLCanvasElement | null,
+  onStatus?: (msg: string) => void
+): Promise<FabricObject[]> {
+  const viewport = page.getViewport({ scale: DESIGN_SCALE });
+  const pageW = viewport.width;
+  const pageH = viewport.height;
+  const objects: FabricObject[] = [];
+
+  onStatus?.("A converter texto…");
+  const raw = await collectPdfTextItems(page);
+  const filtered = raw.filter(
+    (i) => !isJunkBox(i.width, i.height, pageW, pageH)
+  );
+  const merged = mergeLineItems(filtered);
+  const quality = textQualityScore(merged.map((m) => m.text));
+
+  for (const item of merged) {
+    if (isJunkBox(item.width, item.height, pageW, pageH)) continue;
+
+    const cover = new Rect({
+      left: item.left - 1,
+      top: item.top - 1,
+      width: item.width + 2,
+      height: item.height + 2,
+      fill: "#ffffff",
+      strokeWidth: 0,
+      selectable: false,
+      evented: false,
+    });
+    tag(cover, "erase");
+
+    const broken =
+      quality < 0.55 ||
+      hasHeavyMojibake(item.text) ||
+      /[\uFFFD□]/.test(item.text);
+
+    if (broken && bgCanvas) {
+      // Preserve look as a crop — still deletable/movable; double-click can replace later
+      const crop = await cropRegionToDataUrl(
+        bgCanvas,
+        item.left,
+        item.top,
+        item.width,
+        item.height
+      );
+      if (crop) {
+        try {
+          const img = await FabricImage.fromURL(crop);
+          img.set({
+            left: item.left,
+            top: item.top,
+            scaleX: item.width / (img.width || item.width),
+            scaleY: item.height / (img.height || item.height),
+          });
+          tag(img, "image");
+          (img as FabricObject & { extractedText?: string }).extractedText =
+            item.text;
+          objects.push(cover, img);
+          continue;
+        } catch {
+          /* fall through to IText */
+        }
+      }
+    }
+
+    let value = broken ? "" : item.text;
+    if (broken && bgCanvas && item.width * item.height < 80_000) {
+      // Small regions only — avoid OCR on huge areas / barcodes
+      try {
+        const ocr = await ocrRegion(
+          bgCanvas,
+          item.left,
+          item.top,
+          item.width,
+          item.height
+        );
+        if (ocr && !hasHeavyMojibake(ocr)) value = ocr;
+      } catch {
+        /* keep empty */
+      }
+    }
+
+    const text = new IText(value || " ", {
+      left: item.left,
+      top: item.top,
+      fontSize: item.style.fontSize,
+      fill: item.style.fill,
+      fontFamily: item.style.fontFamily,
+      fontWeight: item.style.fontWeight,
+      fontStyle: item.style.fontStyle,
+      backgroundColor: "#ffffff",
+    });
+    tag(text, "pdfText");
+    objects.push(cover, text);
+  }
+
+  onStatus?.("A converter linhas e imagens…");
+  try {
+    const graphics = await buildLineAndImageObjects(page);
+    objects.push(...graphics);
+  } catch (err) {
+    console.warn("Extração de linhas/imagens falhou", err);
+  }
+
+  return objects;
+}
+
+async function cropRegionToDataUrl(
+  pageCanvas: HTMLCanvasElement,
+  left: number,
+  top: number,
+  width: number,
+  height: number
+): Promise<string | null> {
+  const x = Math.max(0, Math.floor(left));
+  const y = Math.max(0, Math.floor(top));
+  const w = Math.max(
+    1,
+    Math.min(Math.ceil(width), pageCanvas.width - x)
+  );
+  const h = Math.max(
+    1,
+    Math.min(Math.ceil(height), pageCanvas.height - y)
+  );
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d");
+  if (!ctx) return null;
+  ctx.drawImage(pageCanvas, x, y, w, h, 0, 0, w, h);
+  return c.toDataURL("image/png");
 }

@@ -7,6 +7,7 @@ export type ObjectKind =
   | "pdfTextHit"
   | "formField"
   | "erase"
+  | "line"
   | "rect"
   | "roundRect"
   | "ellipse"

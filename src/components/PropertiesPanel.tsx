@@ -39,10 +39,9 @@ export default function PropertiesPanel() {
     return (
       <aside className="w-64 shrink-0 bg-panel border-l border-edge p-4 text-sm text-neutral-500">
         <h2 className="text-neutral-300 font-medium mb-2">Propriedades</h2>
-        Abra um PDF — o documento mantém o aspeto original. Use{" "}
-        <span className="text-neutral-300">Apagar</span> para tapar texto, linhas
-        ou imagens. Clique em <span className="text-neutral-300">Detetar texto</span>{" "}
-        e faça duplo-clique numa zona para a editar. Exporte em PDF, PNG ou JPEG.
+        Abra um PDF — texto, linhas e imagens passam a objetos editáveis
+        (selecionar, mover, apagar, alterar). Duplo-clique numa imagem de texto
+        para a converter em texto editável. Exporte em PDF, PNG ou JPEG.
       </aside>
     );
   }
@@ -50,9 +49,12 @@ export default function PropertiesPanel() {
   const kind = getKind(selected);
   const isText = kind === "text" || kind === "pdfText" || kind === "formField";
   const isPdfHit = kind === "pdfTextHit";
-  const isShape = kind === "rect" || kind === "roundRect" || kind === "ellipse";
+  const isShape =
+    kind === "rect" || kind === "roundRect" || kind === "ellipse";
+  const isLine = kind === "line";
   const isTable = kind === "table";
   const isErase = kind === "erase";
+  const isImage = kind === "image";
 
   const fill = (selected.get("fill") as string) ?? "#000000";
   const stroke = (selected.get("stroke") as string) ?? "#000000";
@@ -123,6 +125,42 @@ export default function PropertiesPanel() {
               />
             </Row>
           </>
+        )}
+
+        {isLine && (
+          <>
+            <Row label="Cor">
+              <input
+                type="color"
+                value={toHex((selected.get("stroke") as string) ?? "#111827")}
+                onChange={(e) => update(selected, { stroke: e.target.value })}
+                className="h-7 w-10 bg-transparent"
+              />
+            </Row>
+            <Row label="Espessura">
+              <input
+                type="number"
+                min={1}
+                max={40}
+                value={Math.round((selected.get("strokeWidth") as number) ?? 1)}
+                onChange={(e) =>
+                  update(selected, {
+                    strokeWidth: Number(e.target.value) || 1,
+                  })
+                }
+                className="w-16 bg-panelalt border border-edge rounded px-2 py-1"
+              />
+            </Row>
+          </>
+        )}
+
+        {isImage && (
+          <p className="text-xs text-neutral-400 leading-relaxed">
+            Imagem editável (mover, redimensionar, apagar). Se for texto
+            capturado do PDF,{" "}
+            <strong className="text-neutral-300">duplo-clique</strong> para
+            converter em texto editável.
+          </p>
         )}
 
         {isShape && (

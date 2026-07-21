@@ -1,6 +1,7 @@
 import { PDFDocument } from "pdf-lib";
 import { getCanvas } from "./fabricRegistry";
 import { dataUrlToBytes, downloadFiles, type NamedFile } from "./download";
+import { getContentKind } from "./extractContent";
 
 /**
  * Multiplier applied when rasterizing each overlay canvas for export. The
@@ -27,7 +28,17 @@ export async function buildEditedPdf(
   for (let i = 0; i < pageCount; i++) {
     const canvas = getCanvas(i);
     if (!canvas) continue;
-    if (canvas.getObjects().length === 0) continue;
+
+    // Hide invisible text hit-boxes so they are not stamped into the export.
+    const hits = canvas
+      .getObjects()
+      .filter((o) => getContentKind(o) === "pdfTextHit");
+    for (const h of hits) h.set({ visible: false });
+
+    if (canvas.getObjects().filter((o) => o.visible !== false).length === 0) {
+      for (const h of hits) h.set({ visible: true });
+      continue;
+    }
 
     // Don't bake selection handles into the export.
     const active = canvas.getActiveObject();
@@ -39,8 +50,11 @@ export async function buildEditedPdf(
       multiplier: EXPORT_MULTIPLIER,
     });
 
+    for (const h of hits) h.set({ visible: true });
     if (active) {
       canvas.setActiveObject(active);
+      canvas.requestRenderAll();
+    } else {
       canvas.requestRenderAll();
     }
 

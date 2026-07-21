@@ -20,15 +20,50 @@ async function getWorker(): Promise<Worker> {
   if (sharedWorker) return sharedWorker;
   // Portuguese + English — fits insurance / business PDFs like the user's sample.
   sharedWorker = await createWorker("por+eng", 1, {
-    // Keep logs quiet in the UI console.
     logger: () => undefined,
   });
   return sharedWorker;
 }
 
 /**
- * OCR a rendered page canvas to recover real text when PDF extraction is garbled.
- * Also estimates bold from ink density in each word box.
+ * OCR a cropped region of the rendered page (used when PDF text extraction
+ * is garbled — only for the box the user double-clicked).
+ */
+export async function ocrRegion(
+  pageCanvas: HTMLCanvasElement,
+  left: number,
+  top: number,
+  width: number,
+  height: number
+): Promise<string> {
+  const pad = 3;
+  const x = Math.max(0, Math.floor(left - pad));
+  const y = Math.max(0, Math.floor(top - pad));
+  const w = Math.max(
+    4,
+    Math.min(Math.ceil(width + pad * 2), pageCanvas.width - x)
+  );
+  const h = Math.max(
+    4,
+    Math.min(Math.ceil(height + pad * 2), pageCanvas.height - y)
+  );
+
+  const crop = document.createElement("canvas");
+  crop.width = w;
+  crop.height = h;
+  const ctx = crop.getContext("2d");
+  if (!ctx) return "";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(pageCanvas, x, y, w, h, 0, 0, w, h);
+
+  const worker = await getWorker();
+  const result = await worker.recognize(crop);
+  return (result.data.text || "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * OCR a full rendered page canvas (optional / advanced use).
  */
 export async function ocrPageCanvas(
   canvas: HTMLCanvasElement

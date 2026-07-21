@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Canvas,
   FabricImage,
+  IText,
   Rect,
   type TPointerEventInfo,
   type TPointerEvent,
@@ -20,11 +21,14 @@ import {
 } from "../lib/createObject";
 import {
   createEraseDraft,
-  createTextHitBoxes,
+  convertPageToEditable,
   activatePdfTextHit,
   tagContent,
   getContentKind,
+  findPdfTextHitAt,
+  setHitBoxesVisible,
 } from "../lib/extractContent";
+import { ocrRegion } from "../lib/ocrPage";
 import type { RenderTask } from "pdfjs-dist";
 
 interface Props {
@@ -39,8 +43,7 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
   const fabricRef = useRef<Canvas | null>(null);
   const eraseDraft = useRef<Rect | null>(null);
   const eraseOrigin = useRef<{ x: number; y: number } | null>(null);
-  const hitsLoadedForToken = useRef(0);
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>("A preparar página…");
 
   const zoom = useEditorStore((s) => s.zoom);
   const pdfDoc = useEditorStore((s) => s.pdfDoc);
@@ -49,7 +52,6 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
   const designW = Math.round(width * DESIGN_SCALE);
   const designH = Math.round(height * DESIGN_SCALE);
 
-  // Render PDF background + empty editable overlay (keeps the page looking correct).
   useEffect(() => {
     if (!pdfDoc || !bgRef.current || !overlayRef.current) return;
     let task: RenderTask | null = null;
@@ -67,6 +69,7 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
       const ctx = bg.getContext("2d");
       if (!ctx) return;
 
+      setStatus("A renderizar PDF…");
       task = page.render({ canvasContext: ctx, viewport });
       try {
         await task.promise;
@@ -74,6 +77,12 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
         return;
       }
       if (cancelled) return;
+
+      // Snapshot for crops / OCR before we blank leftovers
+      const snap = document.createElement("canvas");
+      snap.width = bg.width;
+      snap.height = bg.height;
+      snap.getContext("2d")?.drawImage(bg, 0, 0);
 
       canvas = new Canvas(overlayRef.current, {
         width: designW,
@@ -86,33 +95,78 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
 
       const syncSelection = () => {
         const obj = canvas!.getActiveObject() ?? null;
-        for (const o of canvas!.getObjects()) {
-          if (getContentKind(o) === "pdfTextHit") {
-            const selected = o === obj;
-            o.set({
-              stroke: selected
-                ? "rgba(59, 130, 246, 0.9)"
-                : "rgba(59, 130, 246, 0)",
-              fill: selected
-                ? "rgba(59, 130, 246, 0.15)"
-                : "rgba(59, 130, 246, 0.05)",
-            });
-          }
-        }
         useEditorStore.getState().setSelected(obj, obj ? pageIndex : null);
-        canvas!.requestRenderAll();
       };
 
-      const handleDblClick = () => {
-        const obj = canvas!.getActiveObject();
-        if (!obj || getContentKind(obj) !== "pdfTextHit") return;
+      const handleDblClick = async (opt: TPointerEventInfo<TPointerEvent>) => {
+        if (useEditorStore.getState().activeTool === "erase") return;
+        const target = opt.target;
+        // Image crops from bad-encoding text: convert to real editable text via OCR
+        if (target && getContentKind(target) === "image") {
+          const bound = target.getBoundingRect();
+          history.beginSuppress();
+          try {
+            setStatus("A ler texto da imagem…");
+            const value = await ocrRegion(
+              snap,
+              bound.left,
+              bound.top,
+              bound.width,
+              bound.height
+            );
+            const text = new IText(value || "", {
+              left: bound.left,
+              top: bound.top,
+              fontSize: Math.max(10, bound.height * 0.75),
+              fill: "#111827",
+              fontFamily: "Helvetica, Arial, sans-serif",
+              backgroundColor: "#ffffff",
+            });
+            tag(text, "pdfText");
+            canvas!.remove(target);
+            canvas!.add(text);
+            canvas!.setActiveObject(text);
+            (
+              text as unknown as {
+                enterEditing: () => void;
+                selectAll: () => void;
+              }
+            ).enterEditing();
+            if (value) {
+              (text as unknown as { selectAll: () => void }).selectAll();
+            }
+            useEditorStore.getState().setSelected(text, pageIndex);
+            setStatus("Texto editável — altere à vontade.");
+          } finally {
+            history.endSuppress();
+            history.record();
+            window.setTimeout(() => setStatus(null), 3000);
+          }
+          return;
+        }
+
+        const p = canvas!.getScenePoint(opt.e);
+        const hit =
+          (target && getContentKind(target) === "pdfTextHit"
+            ? target
+            : null) || findPdfTextHitAt(canvas!, p.x, p.y);
+        if (!hit) return;
+
         history.beginSuppress();
-        const text = activatePdfTextHit(canvas!, obj);
-        history.endSuppress();
-        history.record();
-        useEditorStore.getState().setSelected(text, pageIndex);
-        setStatus("A editar texto — escreva o novo valor.");
-        window.setTimeout(() => setStatus(null), 3000);
+        try {
+          const text = await activatePdfTextHit(
+            canvas!,
+            hit,
+            snap,
+            setStatus
+          );
+          useEditorStore.getState().setSelected(text, pageIndex);
+          setStatus("A editar texto — altere e clique fora para concluir.");
+          window.setTimeout(() => setStatus(null), 4000);
+        } finally {
+          history.endSuppress();
+          history.record();
+        }
       };
 
       const handleMouseDown = (opt: TPointerEventInfo<TPointerEvent>) => {
@@ -227,8 +281,37 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
       canvas.on("object:added", () => history.record());
       canvas.on("object:removed", () => history.record());
 
-      history.record();
-      setStatus(null);
+      history.beginSuppress();
+      try {
+        const editable = await convertPageToEditable(page, snap, (msg) => {
+          if (!cancelled) setStatus(msg);
+        });
+        if (cancelled) return;
+
+        // Blank PDF backdrop — only editable objects remain visible
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, bg.width, bg.height);
+
+        // Covers first (back), then content
+        const covers = editable.filter((o) => getContentKind(o) === "erase");
+        const rest = editable.filter((o) => getContentKind(o) !== "erase");
+        for (const o of covers) canvas.add(o);
+        for (const o of rest) canvas.add(o);
+        canvas.requestRenderAll();
+
+        setStatus(
+          "Página editável: clique para selecionar, arraste, apague ou altere texto/imagens/linhas."
+        );
+        window.setTimeout(() => {
+          if (!cancelled) setStatus(null);
+        }, 5000);
+      } catch (err) {
+        console.warn("Conversão falhou", err);
+        setStatus("Conversão incompleta — use Apagar / ferramentas manuais.");
+      } finally {
+        history.endSuppress();
+        if (!cancelled) history.record();
+      }
     })();
 
     return () => {
@@ -239,53 +322,18 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
         canvas.dispose();
       }
       fabricRef.current = null;
-      hitsLoadedForToken.current = 0;
     };
   }, [pdfDoc, pageIndex, designW, designH]);
 
-  // Optional: detect text regions when the user clicks "Detetar texto".
   useEffect(() => {
-    if (!textDetectToken || !pdfDoc) return;
-    if (hitsLoadedForToken.current === textDetectToken) return;
+    if (!textDetectToken) return;
     const canvas = fabricRef.current;
     if (!canvas) return;
-
-    let cancelled = false;
-    (async () => {
-      setStatus("A detetar texto…");
-      try {
-        const page = await pdfDoc.getPage(pageIndex + 1);
-        if (cancelled) return;
-        // Remove previous hit boxes only.
-        const prev = canvas
-          .getObjects()
-          .filter((o) => getContentKind(o) === "pdfTextHit");
-        if (prev.length) canvas.remove(...prev);
-
-        history.beginSuppress();
-        const hits = await createTextHitBoxes(page);
-        if (cancelled) return;
-        for (const h of hits) canvas.add(h);
-        canvas.requestRenderAll();
-        history.endSuppress();
-        history.record();
-        hitsLoadedForToken.current = textDetectToken;
-        setStatus(
-          "Texto detetado. Duplo-clique numa zona azul para editar. Use Apagar para imagens/linhas."
-        );
-        window.setTimeout(() => {
-          if (!cancelled) setStatus(null);
-        }, 6000);
-      } catch (err) {
-        console.warn(err);
-        setStatus("Falha ao detetar texto.");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [textDetectToken, pdfDoc, pageIndex]);
+    setHitBoxesVisible(canvas, true);
+    setStatus("Zonas assinaladas (se existirem hit-boxes).");
+    const t = window.setTimeout(() => setStatus(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [textDetectToken]);
 
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
