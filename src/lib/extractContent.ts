@@ -441,20 +441,22 @@ export function tagContent(obj: FabricObject, kind: ObjectKind) {
 }
 
 /**
- * Convert page content into editable Fabric objects:
- * - Text → editable IText (OCR only for that box if encoding is broken)
- * - Bad-encoding text fallback → image crop of the glyphs (still movable/deletable)
- * - Lines / rules → editable Line
- * - Embedded images → editable Image
+ * Convert page content into editable Fabric objects while preserving look.
  *
- * Each object gets a white cover so the original PDF drawing underneath is hidden.
- * Does NOT run full-page OCR (that previously broke barcodes/layout).
+ * When PDF text encoding is broken (common in insurance forms), text regions
+ * become **pixel crops** of the rendered page (identical appearance). Double-click
+ * later turns a crop into real editable text via OCR.
+ *
+ * When encoding is good, text becomes IText with a white cover underneath.
+ * Lines and embedded images become Fabric Line / Image objects.
+ *
+ * The PDF background canvas should stay visible — do NOT wipe it to white.
  */
 export async function convertPageToEditable(
   page: PDFPageProxy,
   bgCanvas: HTMLCanvasElement | null,
   onStatus?: (msg: string) => void
-): Promise<FabricObject[]> {
+): Promise<{ objects: FabricObject[]; usedCrops: boolean }> {
   const viewport = page.getViewport({ scale: DESIGN_SCALE });
   const pageW = viewport.width;
   const pageH = viewport.height;
@@ -467,15 +469,63 @@ export async function convertPageToEditable(
   );
   const merged = mergeLineItems(filtered);
   const quality = textQualityScore(merged.map((m) => m.text));
+  // Insurance / custom-font PDFs: prefer pixel crops so the page looks like the original.
+  const usedCrops = quality < 0.72 || !bgCanvas;
 
   for (const item of merged) {
     if (isJunkBox(item.width, item.height, pageW, pageH)) continue;
 
+    const padX = Math.max(2, item.style.fontSize * 0.12);
+    const padY = Math.max(2, item.style.fontSize * 0.22);
+    const left = item.left - padX;
+    const top = item.top - padY;
+    const width = item.width + padX * 2;
+    const height = item.height + padY * 2;
+
+    if (usedCrops && bgCanvas) {
+      const crop = await cropRegionToDataUrl(bgCanvas, left, top, width, height);
+      if (!crop) continue;
+      try {
+        const img = await FabricImage.fromURL(crop);
+        const cover = new Rect({
+          left,
+          top,
+          width,
+          height,
+          fill: "#ffffff",
+          strokeWidth: 0,
+          selectable: false,
+          evented: false,
+        });
+        tag(cover, "erase");
+        img.set({
+          left,
+          top,
+          scaleX: width / (img.width || width),
+          scaleY: height / (img.height || height),
+        });
+        tag(img, "image");
+        const meta = img as FabricObject & {
+          extractedText?: string;
+          textCrop?: boolean;
+          fontSizeHint?: number;
+        };
+        meta.extractedText = item.text;
+        meta.textCrop = true;
+        meta.fontSizeHint = item.style.fontSize;
+        objects.push(cover, img);
+      } catch {
+        /* skip this fragment */
+      }
+      continue;
+    }
+
+    // Good encoding: real editable text
     const cover = new Rect({
-      left: item.left - 1,
-      top: item.top - 1,
-      width: item.width + 2,
-      height: item.height + 2,
+      left,
+      top,
+      width,
+      height,
       fill: "#ffffff",
       strokeWidth: 0,
       selectable: false,
@@ -483,58 +533,7 @@ export async function convertPageToEditable(
     });
     tag(cover, "erase");
 
-    const broken =
-      quality < 0.55 ||
-      hasHeavyMojibake(item.text) ||
-      /[\uFFFD□]/.test(item.text);
-
-    if (broken && bgCanvas) {
-      // Preserve look as a crop — still deletable/movable; double-click can replace later
-      const crop = await cropRegionToDataUrl(
-        bgCanvas,
-        item.left,
-        item.top,
-        item.width,
-        item.height
-      );
-      if (crop) {
-        try {
-          const img = await FabricImage.fromURL(crop);
-          img.set({
-            left: item.left,
-            top: item.top,
-            scaleX: item.width / (img.width || item.width),
-            scaleY: item.height / (img.height || item.height),
-          });
-          tag(img, "image");
-          (img as FabricObject & { extractedText?: string }).extractedText =
-            item.text;
-          objects.push(cover, img);
-          continue;
-        } catch {
-          /* fall through to IText */
-        }
-      }
-    }
-
-    let value = broken ? "" : item.text;
-    if (broken && bgCanvas && item.width * item.height < 80_000) {
-      // Small regions only — avoid OCR on huge areas / barcodes
-      try {
-        const ocr = await ocrRegion(
-          bgCanvas,
-          item.left,
-          item.top,
-          item.width,
-          item.height
-        );
-        if (ocr && !hasHeavyMojibake(ocr)) value = ocr;
-      } catch {
-        /* keep empty */
-      }
-    }
-
-    const text = new IText(value || " ", {
+    const text = new IText(item.text, {
       left: item.left,
       top: item.top,
       fontSize: item.style.fontSize,
@@ -550,13 +549,17 @@ export async function convertPageToEditable(
 
   onStatus?.("A converter linhas e imagens…");
   try {
-    const graphics = await buildLineAndImageObjects(page);
+    // Keep PDF background: lines/images overlays without aggressive white punches
+    const graphics = await buildLineAndImageObjects(page, {
+      addCovers: true,
+      thinLineCoversOnly: true,
+    });
     objects.push(...graphics);
   } catch (err) {
     console.warn("Extração de linhas/imagens falhou", err);
   }
 
-  return objects;
+  return { objects, usedCrops };
 }
 
 async function cropRegionToDataUrl(

@@ -12,6 +12,7 @@ const EXTRA_PROPS = [
   "fontWeightHint",
   "fontStyleHint",
   "fontFamilyHint",
+  "textCrop",
 ];
 const MAX_ENTRIES = 60;
 

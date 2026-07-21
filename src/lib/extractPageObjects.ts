@@ -291,8 +291,11 @@ async function imageDataToDataUrl(imgData: {
 
 /** Build Fabric objects (selectable/movable) for extracted lines and images. */
 export async function buildLineAndImageObjects(
-  page: PDFPageProxy
+  page: PDFPageProxy,
+  options?: { addCovers?: boolean; thinLineCoversOnly?: boolean }
 ): Promise<FabricObject[]> {
+  const addCovers = options?.addCovers !== false;
+  const thinLineCoversOnly = options?.thinLineCoversOnly === true;
   const { lines, images } = await extractLinesAndImages(page);
   const objects: FabricObject[] = [];
 
@@ -304,18 +307,16 @@ export async function buildLineAndImageObjects(
       evented: true,
     });
     tag(line, "line");
-    objects.push(line);
 
-    // Soft cover under the line so original PDF stroke disappears when bg stays
-    const pad = Math.max(2, L.strokeWidth);
+    const pad = Math.max(1.5, L.strokeWidth);
     const left = Math.min(L.x1, L.x2) - pad;
     const top = Math.min(L.y1, L.y2) - pad;
     const width = Math.abs(L.x2 - L.x1) + pad * 2;
     const height = Math.abs(L.y2 - L.y1) + pad * 2;
-    // Only add opaque cover for axis-aligned-ish strokes (tables/rules)
-    const axisAligned =
-      Math.abs(L.x1 - L.x2) < 1.5 || Math.abs(L.y1 - L.y2) < 1.5;
-    if (axisAligned && (width > 12 || height > 12)) {
+    const isH = Math.abs(L.y1 - L.y2) < 1.5;
+    const isV = Math.abs(L.x1 - L.x2) < 1.5;
+
+    if (addCovers && (isH || isV) && Math.hypot(L.x2 - L.x1, L.y2 - L.y1) > 12) {
       const cover = new Rect({
         left,
         top,
@@ -329,11 +330,28 @@ export async function buildLineAndImageObjects(
       tag(cover, "erase");
       objects.push(cover);
     }
+
+    objects.push(line);
+    void thinLineCoversOnly;
   }
 
   for (const img of images) {
     try {
       const fabricImg = await FabricImage.fromURL(img.dataUrl);
+      if (addCovers) {
+        const cover = new Rect({
+          left: img.left,
+          top: img.top,
+          width: img.width,
+          height: img.height,
+          fill: "#ffffff",
+          strokeWidth: 0,
+          selectable: false,
+          evented: false,
+        });
+        tag(cover, "erase");
+        objects.push(cover);
+      }
       fabricImg.set({
         left: img.left,
         top: img.top,
@@ -341,18 +359,7 @@ export async function buildLineAndImageObjects(
         scaleY: img.height / (fabricImg.height || img.height),
       });
       tag(fabricImg, "image");
-      const cover = new Rect({
-        left: img.left,
-        top: img.top,
-        width: img.width,
-        height: img.height,
-        fill: "#ffffff",
-        strokeWidth: 0,
-        selectable: false,
-        evented: false,
-      });
-      tag(cover, "erase");
-      objects.push(cover, fabricImg);
+      objects.push(fabricImg);
     } catch (err) {
       console.warn("Falha ao criar imagem editável", err);
     }

@@ -4,6 +4,7 @@ import {
   FabricImage,
   IText,
   Rect,
+  type FabricObject,
   type TPointerEventInfo,
   type TPointerEvent,
 } from "fabric";
@@ -104,9 +105,16 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
         // Image crops from bad-encoding text: convert to real editable text via OCR
         if (target && getContentKind(target) === "image") {
           const bound = target.getBoundingRect();
+          const isTextCrop = !!(
+            target as FabricObject & { textCrop?: boolean }
+          ).textCrop;
           history.beginSuppress();
           try {
-            setStatus("A ler texto da imagem…");
+            setStatus(
+              isTextCrop
+                ? "A converter texto para editável…"
+                : "A ler texto da imagem…"
+            );
             const value = await ocrRegion(
               snap,
               bound.left,
@@ -114,10 +122,13 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
               bound.width,
               bound.height
             );
+            const fontHint =
+              (target as FabricObject & { fontSizeHint?: number })
+                .fontSizeHint ?? Math.max(10, bound.height * 0.75);
             const text = new IText(value || "", {
               left: bound.left,
               top: bound.top,
-              fontSize: Math.max(10, bound.height * 0.75),
+              fontSize: fontHint,
               fill: "#111827",
               fontFamily: "Helvetica, Arial, sans-serif",
               backgroundColor: "#ffffff",
@@ -283,16 +294,18 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
 
       history.beginSuppress();
       try {
-        const editable = await convertPageToEditable(page, snap, (msg) => {
-          if (!cancelled) setStatus(msg);
-        });
+        const { objects: editable, usedCrops } = await convertPageToEditable(
+          page,
+          snap,
+          (msg) => {
+            if (!cancelled) setStatus(msg);
+          }
+        );
         if (cancelled) return;
 
-        // Blank PDF backdrop — only editable objects remain visible
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, bg.width, bg.height);
+        // Keep the rendered PDF underneath. Editable objects sit on top with
+        // matching covers/crops so the page looks like the original.
 
-        // Covers first (back), then content
         const covers = editable.filter((o) => getContentKind(o) === "erase");
         const rest = editable.filter((o) => getContentKind(o) !== "erase");
         for (const o of covers) canvas.add(o);
@@ -300,11 +313,13 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
         canvas.requestRenderAll();
 
         setStatus(
-          "Página editável: clique para selecionar, arraste, apague ou altere texto/imagens/linhas."
+          usedCrops
+            ? "Aspeto do PDF preservado. Clique para selecionar; duplo-clique num texto para o editar."
+            : "Página editável: selecione, arraste, apague ou altere texto/imagens/linhas."
         );
         window.setTimeout(() => {
           if (!cancelled) setStatus(null);
-        }, 5000);
+        }, 6000);
       } catch (err) {
         console.warn("Conversão falhou", err);
         setStatus("Conversão incompleta — use Apagar / ferramentas manuais.");
