@@ -17,18 +17,19 @@ file, and multi-page exports larger than **1MB** are packed into a ZIP.
 - Zoom in / out from the toolbar.
 
 ### Edit existing PDF content
-- **Extracted text** — when you open a PDF, existing text is detected and turned
-  into editable text boxes (white background covers the original glyphs).
-  Double-click to edit, drag to move, change font size/color in Properties.
-- **Delete text** — deleting an extracted text box leaves a white erase cover so
-  the original wording does not reappear.
-- **Erase tool** — drag a rectangle to cover any region (shapes, images, logos,
-  leftover text). Resize or move erase regions; delete an erase region to reveal
-  what was underneath.
-- **Form fields** — AcroForm text fields are detected when present and shown as
-  editable overlays (blue-tinted).
-- **Add new content** — text, square, rounded square, circle, table, image on
-  top of any page (same as before).
+- **Full text rebuild** — on open, original text is covered and replaced by
+  editable text boxes so you can change the document for real (not only draw
+  on top).
+- **Style matching** — font size, bold, and italic are detected from the PDF
+  font name when available; Bold/Italic toggles are in the Properties panel.
+- **OCR fallback** — if the PDF uses broken/custom encodings (garbled extract),
+  the app OCRs the rendered page (Portuguese + English) and estimates bold from
+  ink density. First OCR on a page can take a few seconds.
+- **Delete text** — removing a text box leaves a white cover so the original
+  does not return.
+- **Erase tool** — cover remaining background shapes, logos, barcodes or images.
+- **Form fields** — AcroForm text fields become editable when present.
+- **Add new content** — text, shapes, table, image.
 
 ### Editing tools
 - **Select** — click and drag objects; multi-select with the selection box.
@@ -68,17 +69,12 @@ Edits, erasures and overlays are baked into every exported page.
 
 ## Important limitations
 
-True “object-level” rewriting of every PDF vector/path is not reliably possible
-in a browser. This editor uses a practical hybrid:
-
-- Existing **text regions** are detected as faint selectable boxes. **Double-click**
-  a region to edit it. The page itself stays rendered correctly underneath.
-- Garbled extracted characters are usually **not a UTF-8 problem** — many PDFs
-  use custom font encodings without a usable Unicode map. The page can look
-  fine while raw text extraction is wrong; that is why we no longer paint
-  extracted strings over the page automatically.
-- Existing **shapes / images** are removed with the **Erase** tool (white covers).
-- Complex or scanned (image-only) PDFs may have little or no selectable text.
+- Logos, vector lines and barcodes stay on the PDF background until you
+  **Erase** them — only text is fully rebuilt as editable objects.
+- Style matching is heuristic (font names + ink density), not a generative AI
+  model. You can still toggle Bold/Italic manually.
+- OCR needs a network download of language data the first time (Tesseract).
+- Scanned image-only pages rely entirely on OCR quality.
 - Exported overlays are rasterized for WYSIWYG fidelity.
 
 ## Tech stack

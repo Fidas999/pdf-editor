@@ -39,10 +39,10 @@ export default function PropertiesPanel() {
     return (
       <aside className="w-64 shrink-0 bg-panel border-l border-edge p-4 text-sm text-neutral-500">
         <h2 className="text-neutral-300 font-medium mb-2">Properties</h2>
-        Open a PDF to view it clearly. Click a faint text region, then
-        <span className="text-neutral-300"> double-click </span>
-        to edit that text. Use <span className="text-neutral-300">Erase</span> to
-        cover shapes, images or leftover text.
+        Open a PDF — text is rebuilt into editable boxes (bold/size detected).
+        If the PDF encoding is broken, OCR runs automatically. Use
+        <span className="text-neutral-300"> Erase </span>
+        for logos, shapes and images still on the background.
       </aside>
     );
   }
@@ -87,6 +87,28 @@ export default function PropertiesPanel() {
                   setStyle({ fontSize: v });
                 }}
                 className="w-16 bg-panelalt border border-edge rounded px-2 py-1"
+              />
+            </Row>
+            <Row label="Bold">
+              <input
+                type="checkbox"
+                checked={(selected.get("fontWeight") as string) === "bold"}
+                onChange={(e) =>
+                  update(selected, {
+                    fontWeight: e.target.checked ? "bold" : "normal",
+                  })
+                }
+              />
+            </Row>
+            <Row label="Italic">
+              <input
+                type="checkbox"
+                checked={(selected.get("fontStyle") as string) === "italic"}
+                onChange={(e) =>
+                  update(selected, {
+                    fontStyle: e.target.checked ? "italic" : "normal",
+                  })
+                }
               />
             </Row>
             <Row label="Color">

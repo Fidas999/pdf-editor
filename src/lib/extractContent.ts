@@ -3,6 +3,13 @@ import { PDFDocument } from "pdf-lib";
 import type { PDFPageProxy } from "pdfjs-dist";
 import { pdfjsLib, DESIGN_SCALE } from "./pdf";
 import { tag, type ObjectKind } from "./createObject";
+import { ocrPageCanvas } from "./ocrPage";
+import {
+  hasHeavyMojibake,
+  styleFromFontName,
+  textQualityScore,
+  type TextStyle,
+} from "./textStyle";
 
 type Tagged = FabricObject & {
   kind?: ObjectKind;
@@ -11,21 +18,25 @@ type Tagged = FabricObject & {
   fontSizeHint?: number;
 };
 
+export interface ExtractedItem {
+  text: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  style: TextStyle;
+  source: "pdf" | "ocr";
+}
+
 /**
- * Extract text *regions* from a pdf.js page as nearly-invisible hit boxes.
- *
- * We deliberately do NOT paint the extracted strings over the page: many PDFs
- * (insurance forms, etc.) use custom font encodings where getTextContent()
- * returns wrong characters even though the page renders correctly. Covering
- * the page with those strings looked like a "UTF-8 bug". Instead the user
- * double-clicks a region to edit it.
+ * Pull text items + style hints from pdf.js getTextContent().
  */
-export async function extractPageText(
+export async function collectPdfTextItems(
   page: PDFPageProxy
-): Promise<FabricObject[]> {
+): Promise<ExtractedItem[]> {
   const viewport = page.getViewport({ scale: DESIGN_SCALE });
   const content = await page.getTextContent();
-  const objects: FabricObject[] = [];
+  const items: ExtractedItem[] = [];
 
   for (const raw of content.items) {
     if (!("str" in raw)) continue;
@@ -34,6 +45,7 @@ export async function extractPageText(
       transform: number[];
       width: number;
       height: number;
+      fontName?: string;
     };
     const str = item.str;
     if (!str || !str.trim()) continue;
@@ -42,41 +54,115 @@ export async function extractPageText(
     const fontSize = Math.max(6, Math.hypot(m[2], m[3]));
     const scaleX = Math.hypot(m[0], m[1]);
     const width = Math.max(fontSize * 0.5, (item.width || 0) * scaleX);
-    const height = Math.max(fontSize * 0.9, fontSize);
+    const height = Math.max(fontSize * 0.95, fontSize);
     const left = m[4];
     const top = m[5] - fontSize * 0.85;
+    const style = styleFromFontName(item.fontName, fontSize);
 
-    const hit = new Rect({
+    items.push({
+      text: str,
       left,
       top,
       width,
       height,
-      // Almost invisible — original PDF stays visible underneath.
-      fill: "rgba(59, 130, 246, 0.04)",
-      stroke: "rgba(59, 130, 246, 0)",
-      strokeWidth: 1,
-      hoverCursor: "text",
+      style,
+      source: "pdf",
     });
-    const tagged = hit as Tagged;
-    tagged.extractedText = str;
-    tagged.fontSizeHint = fontSize;
-    tag(hit, "pdfTextHit");
-    objects.push(hit);
   }
 
-  return objects;
+  return items;
 }
 
 /**
- * Turn a text hit-box into an editable IText with a white cover so the
- * original glyphs disappear while the user types the replacement.
+ * Rebuild the page text as a fully editable layer:
+ * - Covers each original glyph box with white
+ * - Places styled IText (bold/italic/size/family) on top
+ * - If PDF extraction looks garbled, OCR the rendered canvas instead
+ *
+ * Logos / barcodes / lines outside text boxes stay on the PDF background.
+ */
+export async function rebuildEditableTextLayer(
+  page: PDFPageProxy,
+  bgCanvas: HTMLCanvasElement | null,
+  onStatus?: (msg: string) => void
+): Promise<{ objects: FabricObject[]; usedOcr: boolean }> {
+  onStatus?.("Reading PDF text…");
+  let items = await collectPdfTextItems(page);
+  const quality = textQualityScore(items.map((i) => i.text));
+  let usedOcr = false;
+
+  if (quality < 0.55 && bgCanvas) {
+    onStatus?.("PDF text encoding is broken — running OCR…");
+    try {
+      const ocrItems = await ocrPageCanvas(bgCanvas);
+      if (ocrItems.length > 0) {
+        items = ocrItems.map((w) => ({
+          text: w.text,
+          left: w.left,
+          top: w.top,
+          width: w.width,
+          height: w.height,
+          style: w.style,
+          source: "ocr" as const,
+        }));
+        usedOcr = true;
+      }
+    } catch (err) {
+      console.warn("OCR failed, keeping PDF extraction", err);
+    }
+  }
+
+  onStatus?.("Building editable text…");
+  const objects: FabricObject[] = [];
+
+  for (const item of items) {
+    // Skip clearly broken PDF strings when we did not OCR (avoid covering with junk).
+    if (
+      !usedOcr &&
+      item.source === "pdf" &&
+      (hasHeavyMojibake(item.text) || /[\uFFFD□]/.test(item.text))
+    ) {
+      continue;
+    }
+
+    const cover = new Rect({
+      left: item.left - 1,
+      top: item.top - 1,
+      width: item.width + 2,
+      height: item.height + 2,
+      fill: "#ffffff",
+      strokeWidth: 0,
+      selectable: false,
+      evented: false,
+    });
+    tag(cover, "erase");
+
+    const text = new IText(item.text, {
+      left: item.left,
+      top: item.top,
+      fontSize: item.style.fontSize,
+      fill: item.style.fill,
+      fontFamily: item.style.fontFamily,
+      fontWeight: item.style.fontWeight,
+      fontStyle: item.style.fontStyle,
+      backgroundColor: "#ffffff",
+      padding: 0,
+    });
+    tag(text, "pdfText");
+
+    objects.push(cover, text);
+  }
+
+  return { objects, usedOcr };
+}
+
+/**
+ * Turn a leftover text hit-box into an editable IText (legacy path).
  */
 export function activatePdfTextHit(canvas: Canvas, hit: FabricObject): IText {
   const bound = hit.getBoundingRect();
   const tagged = hit as Tagged;
   const fontSize = tagged.fontSizeHint ?? Math.max(10, bound.height * 0.7);
-  // Prefer empty string when extracted text looks like mojibake / tofu —
-  // user can type the correct value from what they see on the page.
   const guess = tagged.extractedText ?? "";
   const looksBroken = /[\uFFFD□]/.test(guess) || hasHeavyMojibake(guess);
   const initial = looksBroken ? "" : guess;
@@ -87,12 +173,11 @@ export function activatePdfTextHit(canvas: Canvas, hit: FabricObject): IText {
     fontSize,
     fill: "#111827",
     fontFamily: "Helvetica, Arial, sans-serif",
+    fontWeight: "normal",
     backgroundColor: "#ffffff",
     padding: 1,
   });
-  if (bound.width > 0) {
-    text.set({ width: bound.width });
-  }
+  if (bound.width > 0) text.set({ width: bound.width });
   tag(text, "pdfText");
 
   canvas.remove(hit);
@@ -110,27 +195,6 @@ export function activatePdfTextHit(canvas: Canvas, hit: FabricObject): IText {
   return text;
 }
 
-/** Heuristic: lots of Latin-1 symbols / control-ish chars → bad extraction. */
-function hasHeavyMojibake(s: string): boolean {
-  if (s.length < 2) return false;
-  let weird = 0;
-  for (const ch of s) {
-    const code = ch.charCodeAt(0);
-    // Private use, replacement, or common mojibake punctuation blocks
-    if (
-      (code >= 0x80 && code <= 0xff && !/[àáâãäåèéêëìíîïòóôõöùúûüçñÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÇÑ]/.test(ch)) ||
-      (code >= 0x2000 && code <= 0x206f)
-    ) {
-      weird++;
-    }
-  }
-  return weird / s.length > 0.35;
-}
-
-/**
- * Create editable overlays for AcroForm text fields on a page.
- * Coordinates come from pdf-lib (PDF points, origin bottom-left).
- */
 export async function extractFormFields(
   pdfBytes: Uint8Array,
   pageIndex: number,
@@ -206,7 +270,6 @@ export async function extractFormFields(
   return objects;
 }
 
-/** White erase rectangle covering an object's axis-aligned bounding box. */
 export function createEraseFromBounds(
   left: number,
   top: number,
@@ -231,7 +294,6 @@ export function createEraseFromObject(obj: FabricObject) {
   return createEraseFromBounds(bound.left, bound.top, bound.width, bound.height);
 }
 
-/** Interactive erase brush start — a live rectangle updated while dragging. */
 export function createEraseDraft(x: number, y: number): Rect {
   const r = new Rect({
     left: x,
@@ -256,4 +318,26 @@ export function getContentKind(obj: FabricObject): ObjectKind | undefined {
 
 export function tagContent(obj: FabricObject, kind: ObjectKind) {
   return tag(obj, kind);
+}
+
+/** @deprecated hit-box extraction replaced by rebuildEditableTextLayer */
+export async function extractPageText(page: PDFPageProxy): Promise<FabricObject[]> {
+  const items = await collectPdfTextItems(page);
+  return items.map((item) => {
+    const hit = new Rect({
+      left: item.left,
+      top: item.top,
+      width: item.width,
+      height: item.height,
+      fill: "rgba(59, 130, 246, 0.04)",
+      stroke: "rgba(59, 130, 246, 0)",
+      strokeWidth: 1,
+      hoverCursor: "text",
+    });
+    const tagged = hit as Tagged;
+    tagged.extractedText = item.text;
+    tagged.fontSizeHint = item.style.fontSize;
+    tag(hit, "pdfTextHit");
+    return hit;
+  });
 }

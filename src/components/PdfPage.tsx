@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Canvas,
   FabricImage,
@@ -21,7 +21,7 @@ import {
 import {
   createEraseDraft,
   extractFormFields,
-  extractPageText,
+  rebuildEditableTextLayer,
   activatePdfTextHit,
   tagContent,
   getContentKind,
@@ -30,8 +30,8 @@ import type { RenderTask } from "pdfjs-dist";
 
 interface Props {
   pageIndex: number;
-  width: number; // PDF points
-  height: number; // PDF points
+  width: number;
+  height: number;
 }
 
 export default function PdfPage({ pageIndex, width, height }: Props) {
@@ -40,6 +40,7 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
   const fabricRef = useRef<Canvas | null>(null);
   const eraseDraft = useRef<Rect | null>(null);
   const eraseOrigin = useRef<{ x: number; y: number } | null>(null);
+  const [status, setStatus] = useState<string | null>("Preparing page…");
 
   const zoom = useEditorStore((s) => s.zoom);
   const pdfDoc = useEditorStore((s) => s.pdfDoc);
@@ -47,201 +48,196 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
   const designW = Math.round(width * DESIGN_SCALE);
   const designH = Math.round(height * DESIGN_SCALE);
 
-  // Render the PDF page into the background canvas.
+  // Render PDF background, then rebuild a fully editable text layer on top.
   useEffect(() => {
-    if (!pdfDoc || !bgRef.current) return;
+    if (!pdfDoc || !bgRef.current || !overlayRef.current) return;
     let task: RenderTask | null = null;
     let cancelled = false;
+    let canvas: Canvas | null = null;
 
     (async () => {
       const page = await pdfDoc.getPage(pageIndex + 1);
-      if (cancelled || !bgRef.current) return;
+      if (cancelled || !bgRef.current || !overlayRef.current) return;
+
       const viewport = page.getViewport({ scale: DESIGN_SCALE });
-      const canvas = bgRef.current;
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext("2d");
+      const bg = bgRef.current;
+      bg.width = viewport.width;
+      bg.height = viewport.height;
+      const ctx = bg.getContext("2d");
       if (!ctx) return;
+
+      setStatus("Rendering PDF…");
       task = page.render({ canvasContext: ctx, viewport });
       try {
         await task.promise;
       } catch {
-        /* render cancelled */
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      task?.cancel();
-    };
-  }, [pdfDoc, pageIndex]);
-
-  // Initialise the Fabric overlay once and wire up interaction.
-  useEffect(() => {
-    if (!overlayRef.current) return;
-    const canvas = new Canvas(overlayRef.current, {
-      width: designW,
-      height: designH,
-      preserveObjectStacking: true,
-      selection: true,
-    });
-    fabricRef.current = canvas;
-    registerCanvas(pageIndex, canvas);
-
-    const syncSelection = () => {
-      const obj = canvas.getActiveObject() ?? null;
-      // Highlight text hit-boxes when selected so the user can see them.
-      for (const o of canvas.getObjects()) {
-        if (getContentKind(o) === "pdfTextHit") {
-          const selected = o === obj;
-          o.set({
-            stroke: selected ? "rgba(59, 130, 246, 0.9)" : "rgba(59, 130, 246, 0)",
-            fill: selected
-              ? "rgba(59, 130, 246, 0.12)"
-              : "rgba(59, 130, 246, 0.04)",
-          });
-        }
-      }
-      useEditorStore.getState().setSelected(obj, obj ? pageIndex : null);
-      canvas.requestRenderAll();
-    };
-
-    const handleDblClick = () => {
-      const obj = canvas.getActiveObject();
-      if (!obj || getContentKind(obj) !== "pdfTextHit") return;
-      history.beginSuppress();
-      const text = activatePdfTextHit(canvas, obj);
-      history.endSuppress();
-      history.record();
-      useEditorStore.getState().setSelected(text, pageIndex);
-    };
-
-    const handleMouseDown = (opt: TPointerEventInfo<TPointerEvent>) => {
-      useEditorStore.getState().setActivePage(pageIndex);
-      const tool = useEditorStore.getState().activeTool;
-
-      if (tool === "erase") {
-        const p = canvas.getScenePoint(opt.e);
-        eraseOrigin.current = { x: p.x, y: p.y };
-        const draft = createEraseDraft(p.x, p.y);
-        eraseDraft.current = draft;
-        history.beginSuppress();
-        canvas.add(draft);
-        canvas.selection = false;
-        canvas.discardActiveObject();
         return;
       }
+      if (cancelled) return;
 
-      if (tool === "select" || tool === "image") return;
+      canvas = new Canvas(overlayRef.current, {
+        width: designW,
+        height: designH,
+        preserveObjectStacking: true,
+        selection: true,
+      });
+      fabricRef.current = canvas;
+      registerCanvas(pageIndex, canvas);
 
-      const p = canvas.getScenePoint(opt.e);
-      const style = useEditorStore.getState().style;
-      let obj;
-      switch (tool) {
-        case "text":
-          obj = createText(p.x, p.y, style);
-          break;
-        case "rect":
-          obj = createRect(p.x - 70, p.y - 50, style);
-          break;
-        case "roundRect":
-          obj = createRoundRect(p.x - 70, p.y - 50, style);
-          break;
-        case "ellipse":
-          obj = createEllipse(p.x - 70, p.y - 70, style);
-          break;
-        case "table":
-          obj = createTable(p.x - 120, p.y - 75, style);
-          break;
-        default:
-          return;
-      }
-      canvas.add(obj);
-      canvas.setActiveObject(obj);
-      canvas.requestRenderAll();
-      useEditorStore.getState().setActiveTool("select");
-      if (tool === "text" && "enterEditing" in obj) {
-        const it = obj as unknown as {
-          enterEditing: () => void;
-          selectAll: () => void;
-        };
-        it.enterEditing();
-        it.selectAll();
-      }
-      useEditorStore.getState().setSelected(obj, pageIndex);
-    };
+      const syncSelection = () => {
+        const obj = canvas!.getActiveObject() ?? null;
+        for (const o of canvas!.getObjects()) {
+          if (getContentKind(o) === "pdfTextHit") {
+            const selected = o === obj;
+            o.set({
+              stroke: selected
+                ? "rgba(59, 130, 246, 0.9)"
+                : "rgba(59, 130, 246, 0)",
+              fill: selected
+                ? "rgba(59, 130, 246, 0.12)"
+                : "rgba(59, 130, 246, 0.04)",
+            });
+          }
+        }
+        useEditorStore.getState().setSelected(obj, obj ? pageIndex : null);
+        canvas!.requestRenderAll();
+      };
 
-    const handleMouseMove = (opt: TPointerEventInfo<TPointerEvent>) => {
-      const draft = eraseDraft.current;
-      const origin = eraseOrigin.current;
-      if (!draft || !origin) return;
-      const p = canvas.getScenePoint(opt.e);
-      const left = Math.min(origin.x, p.x);
-      const top = Math.min(origin.y, p.y);
-      const w = Math.abs(p.x - origin.x);
-      const h = Math.abs(p.y - origin.y);
-      draft.set({ left, top, width: Math.max(1, w), height: Math.max(1, h) });
-      draft.setCoords();
-      canvas.requestRenderAll();
-    };
-
-    const finishErase = () => {
-      const draft = eraseDraft.current;
-      if (!draft) return;
-      history.endSuppress();
-      const w = draft.width ?? 0;
-      const h = draft.height ?? 0;
-      if (w < 4 && h < 4) {
-        canvas.remove(draft);
-      } else {
-        draft.set({
-          stroke: "#e5e7eb",
-          strokeDashArray: undefined,
-          opacity: 1,
-          selectable: true,
-          evented: true,
-        });
-        tagContent(draft, "erase");
-        canvas.sendObjectToBack(draft);
+      const handleDblClick = () => {
+        const obj = canvas!.getActiveObject();
+        if (!obj || getContentKind(obj) !== "pdfTextHit") return;
+        history.beginSuppress();
+        const text = activatePdfTextHit(canvas!, obj);
+        history.endSuppress();
         history.record();
-      }
-      eraseDraft.current = null;
-      eraseOrigin.current = null;
-      canvas.selection = true;
-      canvas.requestRenderAll();
-    };
+        useEditorStore.getState().setSelected(text, pageIndex);
+      };
 
-    canvas.on("mouse:down", handleMouseDown);
-    canvas.on("mouse:move", handleMouseMove);
-    canvas.on("mouse:up", finishErase);
-    canvas.on("mouse:dblclick", handleDblClick);
-    canvas.on("selection:created", syncSelection);
-    canvas.on("selection:updated", syncSelection);
-    canvas.on("selection:cleared", () => {
-      const s = useEditorStore.getState();
-      if (s.selectedPage === pageIndex) s.setSelected(null, null);
-    });
-    canvas.on("object:modified", () => {
-      useEditorStore.getState().bumpSelection();
-      history.record();
-    });
-    canvas.on("object:added", () => history.record());
-    canvas.on("object:removed", () => history.record());
+      const handleMouseDown = (opt: TPointerEventInfo<TPointerEvent>) => {
+        useEditorStore.getState().setActivePage(pageIndex);
+        const tool = useEditorStore.getState().activeTool;
 
-    // Load extracted PDF text + form fields as editable objects.
-    let cancelled = false;
-    (async () => {
-      const doc = useEditorStore.getState().pdfDoc;
-      const bytes = useEditorStore.getState().pdfBytes;
-      if (!doc) return;
+        if (tool === "erase") {
+          const p = canvas!.getScenePoint(opt.e);
+          eraseOrigin.current = { x: p.x, y: p.y };
+          const draft = createEraseDraft(p.x, p.y);
+          eraseDraft.current = draft;
+          history.beginSuppress();
+          canvas!.add(draft);
+          canvas!.selection = false;
+          canvas!.discardActiveObject();
+          return;
+        }
+
+        if (tool === "select" || tool === "image") return;
+
+        const p = canvas!.getScenePoint(opt.e);
+        const style = useEditorStore.getState().style;
+        let obj;
+        switch (tool) {
+          case "text":
+            obj = createText(p.x, p.y, style);
+            break;
+          case "rect":
+            obj = createRect(p.x - 70, p.y - 50, style);
+            break;
+          case "roundRect":
+            obj = createRoundRect(p.x - 70, p.y - 50, style);
+            break;
+          case "ellipse":
+            obj = createEllipse(p.x - 70, p.y - 70, style);
+            break;
+          case "table":
+            obj = createTable(p.x - 120, p.y - 75, style);
+            break;
+          default:
+            return;
+        }
+        canvas!.add(obj);
+        canvas!.setActiveObject(obj);
+        canvas!.requestRenderAll();
+        useEditorStore.getState().setActiveTool("select");
+        if (tool === "text" && "enterEditing" in obj) {
+          const it = obj as unknown as {
+            enterEditing: () => void;
+            selectAll: () => void;
+          };
+          it.enterEditing();
+          it.selectAll();
+        }
+        useEditorStore.getState().setSelected(obj, pageIndex);
+      };
+
+      const handleMouseMove = (opt: TPointerEventInfo<TPointerEvent>) => {
+        const draft = eraseDraft.current;
+        const origin = eraseOrigin.current;
+        if (!draft || !origin) return;
+        const p = canvas!.getScenePoint(opt.e);
+        const left = Math.min(origin.x, p.x);
+        const top = Math.min(origin.y, p.y);
+        const w = Math.abs(p.x - origin.x);
+        const h = Math.abs(p.y - origin.y);
+        draft.set({ left, top, width: Math.max(1, w), height: Math.max(1, h) });
+        draft.setCoords();
+        canvas!.requestRenderAll();
+      };
+
+      const finishErase = () => {
+        const draft = eraseDraft.current;
+        if (!draft) return;
+        history.endSuppress();
+        const w = draft.width ?? 0;
+        const h = draft.height ?? 0;
+        if (w < 4 && h < 4) {
+          canvas!.remove(draft);
+        } else {
+          draft.set({
+            stroke: "#e5e7eb",
+            strokeDashArray: undefined,
+            opacity: 1,
+            selectable: true,
+            evented: true,
+          });
+          tagContent(draft, "erase");
+          canvas!.sendObjectToBack(draft);
+          history.record();
+        }
+        eraseDraft.current = null;
+        eraseOrigin.current = null;
+        canvas!.selection = true;
+        canvas!.requestRenderAll();
+      };
+
+      canvas.on("mouse:down", handleMouseDown);
+      canvas.on("mouse:move", handleMouseMove);
+      canvas.on("mouse:up", finishErase);
+      canvas.on("mouse:dblclick", handleDblClick);
+      canvas.on("selection:created", syncSelection);
+      canvas.on("selection:updated", syncSelection);
+      canvas.on("selection:cleared", () => {
+        const s = useEditorStore.getState();
+        if (s.selectedPage === pageIndex) s.setSelected(null, null);
+      });
+      canvas.on("object:modified", () => {
+        useEditorStore.getState().bumpSelection();
+        history.record();
+      });
+      canvas.on("object:added", () => history.record());
+      canvas.on("object:removed", () => history.record());
+
       history.beginSuppress();
       try {
-        const page = await doc.getPage(pageIndex + 1);
+        const { objects, usedOcr } = await rebuildEditableTextLayer(
+          page,
+          bg,
+          (msg) => {
+            if (!cancelled) setStatus(msg);
+          }
+        );
         if (cancelled) return;
-        const texts = await extractPageText(page);
-        if (cancelled) return;
-        for (const obj of texts) canvas.add(obj);
+        for (const obj of objects) canvas.add(obj);
 
+        const bytes = useEditorStore.getState().pdfBytes;
         if (bytes) {
           const forms = await extractFormFields(
             bytes,
@@ -253,8 +249,17 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
           for (const obj of forms) canvas.add(obj);
         }
         canvas.requestRenderAll();
+        setStatus(
+          usedOcr
+            ? "Editable text ready (OCR + bold detection). Click any text to edit."
+            : "Editable text ready. Click any text to edit; use Erase for images/shapes."
+        );
+        window.setTimeout(() => {
+          if (!cancelled) setStatus(null);
+        }, 5000);
       } catch (err) {
-        console.warn("Content extraction failed", err);
+        console.warn("Content rebuild failed", err);
+        setStatus("Could not rebuild text — use Erase / add Text manually.");
       } finally {
         history.endSuppress();
         if (!cancelled) history.record();
@@ -263,13 +268,15 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
 
     return () => {
       cancelled = true;
-      unregisterCanvas(pageIndex);
-      canvas.dispose();
+      task?.cancel();
+      if (canvas) {
+        unregisterCanvas(pageIndex);
+        canvas.dispose();
+      }
       fabricRef.current = null;
     };
-  }, [pageIndex, designW, designH, width, height]);
+  }, [pdfDoc, pageIndex, designW, designH, width, height]);
 
-  // Accept image files dropped directly onto the page.
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     const canvas = fabricRef.current;
@@ -300,6 +307,11 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
       <div className="absolute left-1 -top-5 text-xs text-neutral-500 select-none">
         Page {pageIndex + 1}
       </div>
+      {status && (
+        <div className="absolute left-1/2 -translate-x-1/2 -top-5 z-10 px-3 py-1 rounded-full bg-panelalt border border-edge text-[11px] text-accent whitespace-nowrap shadow">
+          {status}
+        </div>
+      )}
       <div
         style={{
           width: designW,
