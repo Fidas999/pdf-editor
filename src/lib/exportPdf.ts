@@ -1,5 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 import { getCanvas } from "./fabricRegistry";
+import { dataUrlToBytes, downloadFiles, type NamedFile } from "./download";
 
 /**
  * Multiplier applied when rasterizing each overlay canvas for export. The
@@ -53,29 +54,35 @@ export async function buildEditedPdf(
   return pdfDoc.save();
 }
 
+/**
+ * Build the edited PDF, then split it into one unique single-page PDF per page.
+ * If there is more than one page and the combined size exceeds 1MB, the pages
+ * are downloaded as a single ZIP; otherwise each page PDF is downloaded.
+ */
 export async function downloadEditedPdf(
   originalBytes: Uint8Array,
   pageCount: number,
-  fileName: string
+  baseName: string
 ) {
-  const bytes = await buildEditedPdf(originalBytes, pageCount);
-  // Copy into a fresh ArrayBuffer to satisfy the Blob type across TS DOM libs.
-  const buffer = new Uint8Array(bytes).slice().buffer;
-  const blob = new Blob([buffer], { type: "application/pdf" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
+  const editedBytes = await buildEditedPdf(originalBytes, pageCount);
+  const edited = await PDFDocument.load(editedBytes);
+  const files: NamedFile[] = [];
 
-function dataUrlToBytes(dataUrl: string): Uint8Array {
-  const base64 = dataUrl.split(",")[1];
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+  for (let i = 0; i < pageCount; i++) {
+    const single = await PDFDocument.create();
+    const [copied] = await single.copyPages(edited, [i]);
+    single.addPage(copied);
+    const bytes = await single.save();
+    const name =
+      pageCount === 1
+        ? `${baseName}.pdf`
+        : `${baseName}-page-${i + 1}.pdf`;
+    files.push({
+      name,
+      bytes,
+      mime: "application/pdf",
+    });
+  }
+
+  await downloadFiles(files, `${baseName}-pages`);
 }

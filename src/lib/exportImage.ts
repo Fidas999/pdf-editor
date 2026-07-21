@@ -1,6 +1,11 @@
 import { DESIGN_SCALE } from "./pdf";
 import { getCanvas } from "./fabricRegistry";
 import { useEditorStore } from "../store/editorStore";
+import {
+  dataUrlToBytes,
+  downloadFiles,
+  type NamedFile,
+} from "./download";
 
 /** Extra resolution for exported images relative to the design canvas. */
 const IMAGE_SCALE = DESIGN_SCALE * 2;
@@ -9,8 +14,8 @@ export type ImageFormat = "png" | "jpeg";
 
 /**
  * Export every page as an image: re-render the PDF page background with pdf.js
- * at high resolution, composite the Fabric overlay on top, and download. A
- * multi-page document produces one file per page.
+ * at high resolution, composite the Fabric overlay on top, and download.
+ * One unique file per page. If total size exceeds 1MB, pages are zipped.
  */
 export async function exportPagesAsImages(
   format: ImageFormat,
@@ -18,6 +23,10 @@ export async function exportPagesAsImages(
 ) {
   const { pdfDoc, pages } = useEditorStore.getState();
   if (!pdfDoc) return;
+
+  const mime = format === "png" ? "image/png" : "image/jpeg";
+  const ext = format === "png" ? "png" : "jpg";
+  const files: NamedFile[] = [];
 
   for (let i = 0; i < pages.length; i++) {
     const page = await pdfDoc.getPage(i + 1);
@@ -49,19 +58,14 @@ export async function exportPagesAsImages(
       }
     }
 
-    const mime = format === "png" ? "image/png" : "image/jpeg";
-    const ext = format === "png" ? "png" : "jpg";
     const dataUrl = out.toDataURL(mime, 0.92);
     const suffix = pages.length > 1 ? `-page-${i + 1}` : "";
-    downloadDataUrl(dataUrl, `${baseName}${suffix}.${ext}`);
+    files.push({
+      name: `${baseName}${suffix}.${ext}`,
+      bytes: dataUrlToBytes(dataUrl),
+      mime,
+    });
   }
-}
 
-function downloadDataUrl(dataUrl: string, fileName: string) {
-  const a = document.createElement("a");
-  a.href = dataUrl;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  await downloadFiles(files, `${baseName}-pages`);
 }

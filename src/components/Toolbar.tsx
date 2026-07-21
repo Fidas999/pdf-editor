@@ -101,7 +101,7 @@ export default function Toolbar() {
     setExporting(true);
     try {
       if (format === "pdf") {
-        await downloadEditedPdf(pdfBytes, pages.length, `${baseName()}-edited.pdf`);
+        await downloadEditedPdf(pdfBytes, pages.length, `${baseName()}-edited`);
       } else {
         await exportPagesAsImages(format, `${baseName()}-edited`);
       }
@@ -245,9 +245,9 @@ export default function Toolbar() {
               onClick={() => setMenuOpen(false)}
             />
             <div className="absolute right-0 mt-1 w-44 z-20 rounded-md border border-edge bg-panelalt shadow-xl overflow-hidden">
-              <MenuItem label="PDF document" hint=".pdf" onClick={() => onExport("pdf")} />
-              <MenuItem label="PNG image" hint=".png" onClick={() => onExport("png")} />
-              <MenuItem label="JPEG image" hint=".jpg" onClick={() => onExport("jpeg")} />
+              <MenuItem label="PDF (per page)" hint=".pdf / .zip" onClick={() => onExport("pdf")} />
+              <MenuItem label="PNG image" hint=".png / .zip" onClick={() => onExport("png")} />
+              <MenuItem label="JPEG image" hint=".jpg / .zip" onClick={() => onExport("jpeg")} />
             </div>
           </>
         )}
