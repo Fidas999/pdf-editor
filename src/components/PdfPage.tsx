@@ -27,7 +27,6 @@ import {
   tagContent,
   getContentKind,
   findPdfTextHitAt,
-  setHitBoxesVisible,
 } from "../lib/extractContent";
 import { ocrRegion } from "../lib/ocrPage";
 import type { RenderTask } from "pdfjs-dist";
@@ -38,40 +37,45 @@ interface Props {
   height: number;
 }
 
+/**
+ * Single-surface page editor: the document IS the Fabric canvas.
+ * pdf.js is only used off-screen to import content — there is no PDF layer
+ * under the editor while you work. Export writes a new flat PDF from this canvas.
+ */
 export default function PdfPage({ pageIndex, width, height }: Props) {
-  const bgRef = useRef<HTMLCanvasElement>(null);
-  const overlayRef = useRef<HTMLCanvasElement>(null);
+  const hostRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<Canvas | null>(null);
+  const snapRef = useRef<HTMLCanvasElement | null>(null);
   const eraseDraft = useRef<Rect | null>(null);
   const eraseOrigin = useRef<{ x: number; y: number } | null>(null);
-  const [status, setStatus] = useState<string | null>("A preparar página…");
+  const [status, setStatus] = useState<string | null>("A importar página…");
 
   const zoom = useEditorStore((s) => s.zoom);
   const pdfDoc = useEditorStore((s) => s.pdfDoc);
-  const textDetectToken = useEditorStore((s) => s.textDetectToken);
 
   const designW = Math.round(width * DESIGN_SCALE);
   const designH = Math.round(height * DESIGN_SCALE);
 
   useEffect(() => {
-    if (!pdfDoc || !bgRef.current || !overlayRef.current) return;
+    if (!pdfDoc || !hostRef.current) return;
     let task: RenderTask | null = null;
     let cancelled = false;
     let canvas: Canvas | null = null;
 
     (async () => {
       const page = await pdfDoc.getPage(pageIndex + 1);
-      if (cancelled || !bgRef.current || !overlayRef.current) return;
+      if (cancelled || !hostRef.current) return;
 
+      // Off-screen render — import only, never shown as a live PDF layer.
       const viewport = page.getViewport({ scale: DESIGN_SCALE });
-      const bg = bgRef.current;
-      bg.width = viewport.width;
-      bg.height = viewport.height;
-      const ctx = bg.getContext("2d");
-      if (!ctx) return;
+      const off = document.createElement("canvas");
+      off.width = Math.round(viewport.width);
+      off.height = Math.round(viewport.height);
+      const offCtx = off.getContext("2d");
+      if (!offCtx) return;
 
-      setStatus("A renderizar PDF…");
-      task = page.render({ canvasContext: ctx, viewport });
+      setStatus("A ler o PDF…");
+      task = page.render({ canvasContext: offCtx, viewport });
       try {
         await task.promise;
       } catch {
@@ -79,49 +83,58 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
       }
       if (cancelled) return;
 
-      // Snapshot for crops / OCR before we blank leftovers
-      const snap = document.createElement("canvas");
-      snap.width = bg.width;
-      snap.height = bg.height;
-      snap.getContext("2d")?.drawImage(bg, 0, 0);
+      snapRef.current = off;
 
-      canvas = new Canvas(overlayRef.current, {
+      canvas = new Canvas(hostRef.current, {
         width: designW,
         height: designH,
+        backgroundColor: "#ffffff",
         preserveObjectStacking: true,
         selection: true,
       });
       fabricRef.current = canvas;
       registerCanvas(pageIndex, canvas);
 
+      // The page content lives in the document (one surface), not under a PDF.
+      const pageBase = await FabricImage.fromURL(off.toDataURL("image/png"));
+      pageBase.set({
+        left: 0,
+        top: 0,
+        selectable: false,
+        evented: false,
+        hoverCursor: "default",
+      });
+      tag(pageBase, "pageBase");
+
       const syncSelection = () => {
         const obj = canvas!.getActiveObject() ?? null;
+        if (obj && getContentKind(obj) === "pageBase") {
+          canvas!.discardActiveObject();
+          useEditorStore.getState().setSelected(null, null);
+          return;
+        }
         useEditorStore.getState().setSelected(obj, obj ? pageIndex : null);
       };
 
       const handleDblClick = async (opt: TPointerEventInfo<TPointerEvent>) => {
         if (useEditorStore.getState().activeTool === "erase") return;
         const target = opt.target;
-        // Image crops from bad-encoding text: convert to real editable text via OCR
+        const snap = snapRef.current;
+
         if (target && getContentKind(target) === "image") {
           const bound = target.getBoundingRect();
-          const isTextCrop = !!(
-            target as FabricObject & { textCrop?: boolean }
-          ).textCrop;
           history.beginSuppress();
           try {
-            setStatus(
-              isTextCrop
-                ? "A converter texto para editável…"
-                : "A ler texto da imagem…"
-            );
-            const value = await ocrRegion(
-              snap,
-              bound.left,
-              bound.top,
-              bound.width,
-              bound.height
-            );
+            setStatus("A converter para texto editável…");
+            const value = snap
+              ? await ocrRegion(
+                  snap,
+                  bound.left,
+                  bound.top,
+                  bound.width,
+                  bound.height
+                )
+              : "";
             const fontHint =
               (target as FabricObject & { fontSizeHint?: number })
                 .fontSizeHint ?? Math.max(10, bound.height * 0.75);
@@ -137,21 +150,18 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
             canvas!.remove(target);
             canvas!.add(text);
             canvas!.setActiveObject(text);
-            (
-              text as unknown as {
-                enterEditing: () => void;
-                selectAll: () => void;
-              }
-            ).enterEditing();
-            if (value) {
-              (text as unknown as { selectAll: () => void }).selectAll();
-            }
+            const ed = text as unknown as {
+              enterEditing: () => void;
+              selectAll: () => void;
+            };
+            ed.enterEditing();
+            if (value) ed.selectAll();
             useEditorStore.getState().setSelected(text, pageIndex);
-            setStatus("Texto editável — altere à vontade.");
+            setStatus("Texto editável.");
           } finally {
             history.endSuppress();
             history.record();
-            window.setTimeout(() => setStatus(null), 3000);
+            window.setTimeout(() => setStatus(null), 2500);
           }
           return;
         }
@@ -172,8 +182,8 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
             setStatus
           );
           useEditorStore.getState().setSelected(text, pageIndex);
-          setStatus("A editar texto — altere e clique fora para concluir.");
-          window.setTimeout(() => setStatus(null), 4000);
+          setStatus("A editar texto.");
+          window.setTimeout(() => setStatus(null), 3000);
         } finally {
           history.endSuppress();
           history.record();
@@ -242,9 +252,12 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
         const p = canvas!.getScenePoint(opt.e);
         const left = Math.min(origin.x, p.x);
         const top = Math.min(origin.y, p.y);
-        const w = Math.abs(p.x - origin.x);
-        const h = Math.abs(p.y - origin.y);
-        draft.set({ left, top, width: Math.max(1, w), height: Math.max(1, h) });
+        draft.set({
+          left,
+          top,
+          width: Math.max(1, Math.abs(p.x - origin.x)),
+          height: Math.max(1, Math.abs(p.y - origin.y)),
+        });
         draft.setCoords();
         canvas!.requestRenderAll();
       };
@@ -266,7 +279,6 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
             evented: true,
           });
           tagContent(draft, "erase");
-          canvas!.sendObjectToBack(draft);
           history.record();
         }
         eraseDraft.current = null;
@@ -294,35 +306,39 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
 
       history.beginSuppress();
       try {
-        const { objects: editable, usedCrops } = await convertPageToEditable(
+        canvas.add(pageBase);
+        canvas.sendObjectToBack(pageBase);
+
+        const { objects, usedCrops } = await convertPageToEditable(
           page,
-          snap,
+          off,
           (msg) => {
             if (!cancelled) setStatus(msg);
           }
         );
         if (cancelled) return;
 
-        // Keep the rendered PDF underneath. Editable objects sit on top with
-        // matching covers/crops so the page looks like the original.
-
-        const covers = editable.filter((o) => getContentKind(o) === "erase");
-        const rest = editable.filter((o) => getContentKind(o) !== "erase");
-        for (const o of covers) canvas.add(o);
+        const covers = objects.filter((o) => getContentKind(o) === "erase");
+        const rest = objects.filter((o) => getContentKind(o) !== "erase");
+        for (const o of covers) {
+          canvas.add(o);
+          // Keep covers above pageBase but under content
+        }
         for (const o of rest) canvas.add(o);
+        canvas.sendObjectToBack(pageBase);
         canvas.requestRenderAll();
 
         setStatus(
           usedCrops
-            ? "Aspeto do PDF preservado. Clique para selecionar; duplo-clique num texto para o editar."
-            : "Página editável: selecione, arraste, apague ou altere texto/imagens/linhas."
+            ? "Documento carregado. Duplo-clique no texto para o editar; Exportar gera um PDF novo e plano."
+            : "Documento editável. Exportar gera um PDF novo (sem layers)."
         );
         window.setTimeout(() => {
           if (!cancelled) setStatus(null);
         }, 6000);
       } catch (err) {
-        console.warn("Conversão falhou", err);
-        setStatus("Conversão incompleta — use Apagar / ferramentas manuais.");
+        console.warn(err);
+        setStatus("Falha ao importar — pode editar a página base com Apagar/Texto.");
       } finally {
         history.endSuppress();
         if (!cancelled) history.record();
@@ -337,18 +353,9 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
         canvas.dispose();
       }
       fabricRef.current = null;
+      snapRef.current = null;
     };
   }, [pdfDoc, pageIndex, designW, designH]);
-
-  useEffect(() => {
-    if (!textDetectToken) return;
-    const canvas = fabricRef.current;
-    if (!canvas) return;
-    setHitBoxesVisible(canvas, true);
-    setStatus("Zonas assinaladas (se existirem hit-boxes).");
-    const t = window.setTimeout(() => setStatus(null), 4000);
-    return () => window.clearTimeout(t);
-  }, [textDetectToken]);
 
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
@@ -395,12 +402,7 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
         onDrop={onDrop}
         onDragOver={(e) => e.preventDefault()}
       >
-        <canvas
-          ref={bgRef}
-          className="absolute top-0 left-0 bg-white"
-          style={{ width: designW, height: designH }}
-        />
-        <canvas ref={overlayRef} className="absolute top-0 left-0" />
+        <canvas ref={hostRef} className="block bg-white" />
       </div>
     </div>
   );

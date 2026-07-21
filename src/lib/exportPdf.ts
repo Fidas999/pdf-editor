@@ -2,45 +2,30 @@ import { PDFDocument } from "pdf-lib";
 import { getCanvas } from "./fabricRegistry";
 import { dataUrlToBytes, downloadFiles, type NamedFile } from "./download";
 import { getContentKind } from "./extractContent";
+import { useEditorStore } from "../store/editorStore";
 
-/**
- * Multiplier applied when rasterizing each overlay canvas for export. The
- * overlay canvases already render at DESIGN_SCALE; this adds extra resolution
- * so stamped annotations stay crisp in the output PDF.
- */
+/** Extra resolution when flattening the editor canvas into the output PDF. */
 const EXPORT_MULTIPLIER = 2;
 
 /**
- * Merge every page's Fabric overlay onto the original PDF and return the bytes.
- *
- * Each overlay canvas is transparent except for the objects the user added, so
- * stamping it full-page over the original preserves the existing content and
- * lays the edits on top. Rasterizing guarantees that shapes, tables, images,
- * text, rotations and scaling all reproduce exactly as shown on screen.
+ * Build a brand-new flat PDF from the editor canvases only (no original PDF
+ * content underneath). Each page is the WYSIWYG raster of the editable document.
  */
-export async function buildEditedPdf(
-  originalBytes: Uint8Array,
-  pageCount: number
-): Promise<Uint8Array> {
-  const pdfDoc = await PDFDocument.load(originalBytes);
-  const pages = pdfDoc.getPages();
+export async function buildFlatPdf(): Promise<Uint8Array> {
+  const { pages } = useEditorStore.getState();
+  const pdfDoc = await PDFDocument.create();
 
-  for (let i = 0; i < pageCount; i++) {
+  for (let i = 0; i < pages.length; i++) {
+    const info = pages[i];
+    const page = pdfDoc.addPage([info.width, info.height]);
     const canvas = getCanvas(i);
     if (!canvas) continue;
 
-    // Hide invisible text hit-boxes so they are not stamped into the export.
     const hits = canvas
       .getObjects()
       .filter((o) => getContentKind(o) === "pdfTextHit");
     for (const h of hits) h.set({ visible: false });
 
-    if (canvas.getObjects().filter((o) => o.visible !== false).length === 0) {
-      for (const h of hits) h.set({ visible: true });
-      continue;
-    }
-
-    // Don't bake selection handles into the export.
     const active = canvas.getActiveObject();
     canvas.discardActiveObject();
     canvas.requestRenderAll();
@@ -53,33 +38,26 @@ export async function buildEditedPdf(
     for (const h of hits) h.set({ visible: true });
     if (active) {
       canvas.setActiveObject(active);
-      canvas.requestRenderAll();
-    } else {
-      canvas.requestRenderAll();
     }
+    canvas.requestRenderAll();
 
-    const pngBytes = dataUrlToBytes(dataUrl);
-    const png = await pdfDoc.embedPng(pngBytes);
-    const page = pages[i];
-    const { width, height } = page.getSize();
-    page.drawImage(png, { x: 0, y: 0, width, height });
+    const png = await pdfDoc.embedPng(dataUrlToBytes(dataUrl));
+    page.drawImage(png, {
+      x: 0,
+      y: 0,
+      width: info.width,
+      height: info.height,
+    });
   }
 
   return pdfDoc.save();
 }
 
-/**
- * Build the edited PDF, then split it into one unique single-page PDF per page.
- * If there is more than one page and the combined size exceeds 1MB, the pages
- * are downloaded as a single ZIP; otherwise each page PDF is downloaded.
- */
-export async function downloadEditedPdf(
-  originalBytes: Uint8Array,
-  pageCount: number,
-  baseName: string
-) {
-  const editedBytes = await buildEditedPdf(originalBytes, pageCount);
-  const edited = await PDFDocument.load(editedBytes);
+/** Export one PDF file per page (ZIP if combined size > 1MB). */
+export async function downloadEditedPdf(baseName: string) {
+  const flat = await buildFlatPdf();
+  const edited = await PDFDocument.load(flat);
+  const pageCount = edited.getPageCount();
   const files: NamedFile[] = [];
 
   for (let i = 0; i < pageCount; i++) {
@@ -88,14 +66,8 @@ export async function downloadEditedPdf(
     single.addPage(copied);
     const bytes = await single.save();
     const name =
-      pageCount === 1
-        ? `${baseName}.pdf`
-        : `${baseName}-page-${i + 1}.pdf`;
-    files.push({
-      name,
-      bytes,
-      mime: "application/pdf",
-    });
+      pageCount === 1 ? `${baseName}.pdf` : `${baseName}-page-${i + 1}.pdf`;
+    files.push({ name, bytes, mime: "application/pdf" });
   }
 
   await downloadFiles(files, `${baseName}-pages`);

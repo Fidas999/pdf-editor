@@ -2,6 +2,7 @@ import { Rect, Ellipse, IText, Line, Group, type FabricObject } from "fabric";
 import type { StyleDefaults } from "../store/editorStore";
 
 export type ObjectKind =
+  | "pageBase"
   | "text"
   | "pdfText"
   | "pdfTextHit"

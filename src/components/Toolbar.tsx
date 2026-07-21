@@ -56,10 +56,8 @@ export default function Toolbar() {
   const setZoom = useEditorStore((s) => s.setZoom);
   const pdfBytes = useEditorStore((s) => s.pdfBytes);
   const fileName = useEditorStore((s) => s.fileName);
-  const pages = useEditorStore((s) => s.pages);
   const canUndo = useEditorStore((s) => s.canUndo);
   const canRedo = useEditorStore((s) => s.canRedo);
-  const requestTextDetect = useEditorStore((s) => s.requestTextDetect);
 
   const openInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -107,7 +105,7 @@ export default function Toolbar() {
     setExporting(true);
     try {
       if (format === "pdf") {
-        await downloadEditedPdf(pdfBytes, pages.length, `${baseName()}-edited`);
+        await downloadEditedPdf(`${baseName()}-edited`);
       } else {
         await exportPagesAsImages(format, `${baseName()}-edited`);
       }
@@ -185,17 +183,6 @@ export default function Toolbar() {
           e.target.value = "";
         }}
       />
-
-      <div className="w-px h-7 bg-edge mx-1" />
-
-      <button
-        disabled={!hasDoc}
-        onClick={() => requestTextDetect()}
-        title="Detetar zonas de texto para editar (sem estragar o aspeto do PDF)"
-        className={`px-3 py-1.5 rounded-md text-sm border border-edge bg-panelalt hover:bg-edge disabled:opacity-40 disabled:cursor-not-allowed`}
-      >
-        Detetar texto
-      </button>
 
       <div className="w-px h-7 bg-edge mx-1" />
 

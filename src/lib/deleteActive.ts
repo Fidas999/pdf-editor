@@ -3,9 +3,9 @@ import { getCanvas } from "./fabricRegistry";
 import { createEraseFromObject, getContentKind } from "./extractContent";
 
 /**
- * Remove the currently selected object(s). For extracted PDF text / form
- * fields, leave a white erase rect behind so the original content stays
- * covered after deletion. No-op while a text object is being edited.
+ * Remove the currently selected object(s). Never deletes the locked page base.
+ * For text/image crops, leave a white erase so content does not reappear from
+ * the page base underneath.
  */
 export function deleteActive() {
   const { selectedPage } = useEditorStore.getState();
@@ -22,16 +22,29 @@ export function deleteActive() {
     return;
   }
 
-  const objects = canvas.getActiveObjects();
+  const objects = canvas
+    .getActiveObjects()
+    .filter((o) => getContentKind(o) !== "pageBase");
   if (objects.length === 0) return;
 
   for (const obj of objects) {
     const kind = getContentKind(obj);
-    if (kind === "pdfText" || kind === "formField" || kind === "pdfTextHit") {
+    if (
+      kind === "pdfText" ||
+      kind === "formField" ||
+      kind === "pdfTextHit" ||
+      kind === "image" ||
+      kind === "line"
+    ) {
       const erase = createEraseFromObject(obj);
       canvas.add(erase);
-      // Move erase under remaining overlays so new drawings stay on top.
-      canvas.sendObjectToBack(erase);
+      // Keep erase above the locked page base
+      const base = canvas
+        .getObjects()
+        .find((o) => getContentKind(o) === "pageBase");
+      if (base) {
+        canvas.sendObjectToBack(base);
+      }
     }
     canvas.remove(obj);
   }

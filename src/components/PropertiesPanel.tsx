@@ -39,9 +39,8 @@ export default function PropertiesPanel() {
     return (
       <aside className="w-64 shrink-0 bg-panel border-l border-edge p-4 text-sm text-neutral-500">
         <h2 className="text-neutral-300 font-medium mb-2">Propriedades</h2>
-        Abra um PDF — texto, linhas e imagens passam a objetos editáveis
-        (selecionar, mover, apagar, alterar). Duplo-clique numa imagem de texto
-        para a converter em texto editável. Exporte em PDF, PNG ou JPEG.
+        Abra um PDF — o ficheiro é importado para um <span className="text-neutral-300">documento editável único</span> (sem layer por cima do PDF).
+        Edite texto (duplo-clique), linhas e imagens; ao exportar gera-se um <span className="text-neutral-300">PDF novo e plano</span>.
       </aside>
     );
   }
