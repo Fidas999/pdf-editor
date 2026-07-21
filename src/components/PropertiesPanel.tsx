@@ -38,11 +38,11 @@ export default function PropertiesPanel() {
   if (!selected) {
     return (
       <aside className="w-64 shrink-0 bg-panel border-l border-edge p-4 text-sm text-neutral-500">
-        <h2 className="text-neutral-300 font-medium mb-2">Properties</h2>
-        Open a PDF — text is rebuilt into editable boxes (bold/size detected).
-        If the PDF encoding is broken, OCR runs automatically. Use
-        <span className="text-neutral-300"> Erase </span>
-        for logos, shapes and images still on the background.
+        <h2 className="text-neutral-300 font-medium mb-2">Propriedades</h2>
+        Abra um PDF — o documento mantém o aspeto original. Use{" "}
+        <span className="text-neutral-300">Apagar</span> para tapar texto, linhas
+        ou imagens. Clique em <span className="text-neutral-300">Detetar texto</span>{" "}
+        e faça duplo-clique numa zona para a editar. Exporte em PDF, PNG ou JPEG.
       </aside>
     );
   }

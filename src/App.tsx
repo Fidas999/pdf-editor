@@ -79,10 +79,10 @@ export default function App() {
                 </svg>
                 <div className="text-center">
                   <div className="text-lg font-medium text-neutral-200">
-                    Open a PDF to start editing
+                    Abrir um PDF para começar a editar
                   </div>
                   <div className="text-sm text-neutral-500 mt-1">
-                    Click to browse or drag &amp; drop a PDF here
+                    Clique para escolher ou arraste um PDF para aqui
                   </div>
                 </div>
               </button>
@@ -102,7 +102,7 @@ export default function App() {
 
           {loading && (
             <div className="h-full grid place-items-center text-neutral-400">
-              Loading PDF...
+              A carregar PDF...
             </div>
           )}
 

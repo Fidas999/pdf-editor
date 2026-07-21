@@ -23,28 +23,28 @@ const icon = (d: string, extra?: JSX.Element) => (
 );
 
 const TOOLS: ToolDef[] = [
-  { id: "select", label: "Select", icon: icon("M4 3l7 17 2-7 7-2z") },
-  { id: "text", label: "Text", icon: icon("M5 5h14M12 5v14M9 19h6") },
-  { id: "rect", label: "Square", icon: icon("M4 5h16v14H4z") },
+  { id: "select", label: "Selecionar", icon: icon("M4 3l7 17 2-7 7-2z") },
+  { id: "text", label: "Texto", icon: icon("M5 5h14M12 5v14M9 19h6") },
+  { id: "rect", label: "Quadrado", icon: icon("M4 5h16v14H4z") },
   {
     id: "roundRect",
-    label: "Rounded",
+    label: "Arredondado",
     icon: icon("M7 5h10a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3z"),
   },
-  { id: "ellipse", label: "Circle", icon: icon("M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16z") },
+  { id: "ellipse", label: "Círculo", icon: icon("M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16z") },
   {
     id: "table",
-    label: "Table",
+    label: "Tabela",
     icon: icon("M4 5h16v14H4zM4 10h16M4 15h16M9 5v14M15 5v14"),
   },
   {
     id: "image",
-    label: "Image",
+    label: "Imagem",
     icon: icon("M4 5h16v14H4zM8 11l3 3 3-4 4 5", <circle cx="8.5" cy="8.5" r="1.4" />),
   },
   {
     id: "erase",
-    label: "Erase",
+    label: "Apagar",
     icon: icon("M4 16l8-8 4 4-8 8H4v-4zM14 6l4 4"),
   },
 ];
@@ -59,6 +59,7 @@ export default function Toolbar() {
   const pages = useEditorStore((s) => s.pages);
   const canUndo = useEditorStore((s) => s.canUndo);
   const canRedo = useEditorStore((s) => s.canRedo);
+  const requestTextDetect = useEditorStore((s) => s.requestTextDetect);
 
   const openInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -112,7 +113,7 @@ export default function Toolbar() {
       }
     } catch (err) {
       console.error(err);
-      alert("Export failed. See console for details.");
+      alert("A exportação falhou. Veja a consola para detalhes.");
     } finally {
       setExporting(false);
     }
@@ -131,7 +132,7 @@ export default function Toolbar() {
         className="px-3 py-1.5 rounded-md text-sm bg-panelalt hover:bg-edge border border-edge"
         onClick={() => openInputRef.current?.click()}
       >
-        Open PDF
+        Abrir PDF
       </button>
       <input
         ref={openInputRef}
@@ -169,7 +170,7 @@ export default function Toolbar() {
           className="flex flex-col items-center justify-center w-14 h-11 rounded-md border border-edge bg-panelalt hover:bg-red-600/80 text-[10px] gap-0.5 text-neutral-200"
         >
           {icon("M5 7h14M9 7V5h6v2M6 7l1 13h10l1-13")}
-          Delete
+          Apagar
         </button>
       </div>
 
@@ -187,11 +188,22 @@ export default function Toolbar() {
 
       <div className="w-px h-7 bg-edge mx-1" />
 
+      <button
+        disabled={!hasDoc}
+        onClick={() => requestTextDetect()}
+        title="Detetar zonas de texto para editar (sem estragar o aspeto do PDF)"
+        className={`px-3 py-1.5 rounded-md text-sm border border-edge bg-panelalt hover:bg-edge disabled:opacity-40 disabled:cursor-not-allowed`}
+      >
+        Detetar texto
+      </button>
+
+      <div className="w-px h-7 bg-edge mx-1" />
+
       <div className={`flex items-center gap-1 ${hasDoc ? "" : "opacity-40 pointer-events-none"}`}>
         <button
           onClick={() => history.undo()}
           disabled={!canUndo}
-          title="Undo (Ctrl+Z)"
+          title="Anular (Ctrl+Z)"
           className="w-8 h-8 grid place-items-center rounded-md bg-panelalt border border-edge hover:bg-edge disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {icon("M9 14L4 9l5-5", <path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5h-3" />)}
@@ -199,7 +211,7 @@ export default function Toolbar() {
         <button
           onClick={() => history.redo()}
           disabled={!canRedo}
-          title="Redo (Ctrl+Y)"
+          title="Refazer (Ctrl+Y)"
           className="w-8 h-8 grid place-items-center rounded-md bg-panelalt border border-edge hover:bg-edge disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {icon("M15 14l5-5-5-5", <path d="M20 9H9a5 5 0 0 0-5 5v0a5 5 0 0 0 5 5h3" />)}
@@ -236,7 +248,7 @@ export default function Toolbar() {
           onClick={() => setMenuOpen((o) => !o)}
           className="px-4 py-1.5 rounded-md text-sm font-medium bg-accent hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed text-white flex items-center gap-1.5"
         >
-          {exporting ? "Exporting..." : "Export"}
+          {exporting ? "A exportar..." : "Exportar"}
           {!exporting && (
             <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
               <path d="M6 9l6 6 6-6" />
@@ -250,9 +262,9 @@ export default function Toolbar() {
               onClick={() => setMenuOpen(false)}
             />
             <div className="absolute right-0 mt-1 w-44 z-20 rounded-md border border-edge bg-panelalt shadow-xl overflow-hidden">
-              <MenuItem label="PDF (per page)" hint=".pdf / .zip" onClick={() => onExport("pdf")} />
-              <MenuItem label="PNG image" hint=".png / .zip" onClick={() => onExport("png")} />
-              <MenuItem label="JPEG image" hint=".jpg / .zip" onClick={() => onExport("jpeg")} />
+              <MenuItem label="PDF (por página)" hint=".pdf / .zip" onClick={() => onExport("pdf")} />
+              <MenuItem label="Imagem PNG" hint=".png / .zip" onClick={() => onExport("png")} />
+              <MenuItem label="Imagem JPEG" hint=".jpg / .zip" onClick={() => onExport("jpeg")} />
             </div>
           </>
         )}

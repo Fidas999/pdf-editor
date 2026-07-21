@@ -3,7 +3,16 @@ import { getCanvas } from "./fabricRegistry";
 import { useEditorStore } from "../store/editorStore";
 
 /** Custom properties we persist so shapes/tables round-trip through JSON. */
-const EXTRA_PROPS = ["kind", "tableMeta", "formName", "extractedText", "fontSizeHint"];
+const EXTRA_PROPS = [
+  "kind",
+  "tableMeta",
+  "formName",
+  "extractedText",
+  "fontSizeHint",
+  "fontWeightHint",
+  "fontStyleHint",
+  "fontFamilyHint",
+];
 const MAX_ENTRIES = 60;
 
 type SerializedObject = Record<string, unknown>;
@@ -124,6 +133,9 @@ function reviveCustomProps(serialized: SerializedObject, instance: object) {
     formName?: unknown;
     extractedText?: unknown;
     fontSizeHint?: unknown;
+    fontWeightHint?: unknown;
+    fontStyleHint?: unknown;
+    fontFamilyHint?: unknown;
   };
   if (serialized.kind !== undefined) obj.kind = serialized.kind;
   if (serialized.tableMeta !== undefined) obj.tableMeta = serialized.tableMeta;
@@ -132,6 +144,12 @@ function reviveCustomProps(serialized: SerializedObject, instance: object) {
     obj.extractedText = serialized.extractedText;
   if (serialized.fontSizeHint !== undefined)
     obj.fontSizeHint = serialized.fontSizeHint;
+  if (serialized.fontWeightHint !== undefined)
+    obj.fontWeightHint = serialized.fontWeightHint;
+  if (serialized.fontStyleHint !== undefined)
+    obj.fontStyleHint = serialized.fontStyleHint;
+  if (serialized.fontFamilyHint !== undefined)
+    obj.fontFamilyHint = serialized.fontFamilyHint;
 }
 
 export const history = new HistoryManager();

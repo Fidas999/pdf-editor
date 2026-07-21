@@ -46,6 +46,9 @@ interface EditorState {
   canUndo: boolean;
   canRedo: boolean;
 
+  /** Incremented when the user asks to detect selectable text regions. */
+  textDetectToken: number;
+
   setDocument: (data: {
     fileName: string;
     pdfBytes: Uint8Array;
@@ -61,6 +64,7 @@ interface EditorState {
   bumpSelection: () => void;
   setStyle: (patch: Partial<StyleDefaults>) => void;
   setHistoryFlags: (canUndo: boolean, canRedo: boolean) => void;
+  requestTextDetect: () => void;
 }
 
 const defaultStyle: StyleDefaults = {
@@ -92,6 +96,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   canUndo: false,
   canRedo: false,
 
+  textDetectToken: 0,
+
   setDocument: ({ fileName, pdfBytes, pdfDoc, pages }) =>
     set({
       fileName,
@@ -101,6 +107,7 @@ export const useEditorStore = create<EditorState>((set) => ({
       loading: false,
       selected: null,
       selectedPage: null,
+      textDetectToken: 0,
     }),
   reset: () =>
     set({
@@ -112,6 +119,7 @@ export const useEditorStore = create<EditorState>((set) => ({
       selectedPage: null,
       activeTool: "select",
       zoom: 1,
+      textDetectToken: 0,
     }),
   setLoading: (loading) => set({ loading }),
   setZoom: (zoom) => set({ zoom: Math.min(4, Math.max(0.25, zoom)) }),
@@ -127,4 +135,6 @@ export const useEditorStore = create<EditorState>((set) => ({
     set((s) => ({ selectionVersion: s.selectionVersion + 1 })),
   setStyle: (patch) => set((s) => ({ style: { ...s.style, ...patch } })),
   setHistoryFlags: (canUndo, canRedo) => set({ canUndo, canRedo }),
+  requestTextDetect: () =>
+    set((s) => ({ textDetectToken: s.textDetectToken + 1 })),
 }));

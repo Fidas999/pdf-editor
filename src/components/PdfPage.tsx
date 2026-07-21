@@ -20,8 +20,7 @@ import {
 } from "../lib/createObject";
 import {
   createEraseDraft,
-  extractFormFields,
-  rebuildEditableTextLayer,
+  createTextHitBoxes,
   activatePdfTextHit,
   tagContent,
   getContentKind,
@@ -40,15 +39,17 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
   const fabricRef = useRef<Canvas | null>(null);
   const eraseDraft = useRef<Rect | null>(null);
   const eraseOrigin = useRef<{ x: number; y: number } | null>(null);
-  const [status, setStatus] = useState<string | null>("Preparing page…");
+  const hitsLoadedForToken = useRef(0);
+  const [status, setStatus] = useState<string | null>(null);
 
   const zoom = useEditorStore((s) => s.zoom);
   const pdfDoc = useEditorStore((s) => s.pdfDoc);
+  const textDetectToken = useEditorStore((s) => s.textDetectToken);
 
   const designW = Math.round(width * DESIGN_SCALE);
   const designH = Math.round(height * DESIGN_SCALE);
 
-  // Render PDF background, then rebuild a fully editable text layer on top.
+  // Render PDF background + empty editable overlay (keeps the page looking correct).
   useEffect(() => {
     if (!pdfDoc || !bgRef.current || !overlayRef.current) return;
     let task: RenderTask | null = null;
@@ -66,7 +67,6 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
       const ctx = bg.getContext("2d");
       if (!ctx) return;
 
-      setStatus("Rendering PDF…");
       task = page.render({ canvasContext: ctx, viewport });
       try {
         await task.promise;
@@ -94,8 +94,8 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
                 ? "rgba(59, 130, 246, 0.9)"
                 : "rgba(59, 130, 246, 0)",
               fill: selected
-                ? "rgba(59, 130, 246, 0.12)"
-                : "rgba(59, 130, 246, 0.04)",
+                ? "rgba(59, 130, 246, 0.15)"
+                : "rgba(59, 130, 246, 0.05)",
             });
           }
         }
@@ -111,6 +111,8 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
         history.endSuppress();
         history.record();
         useEditorStore.getState().setSelected(text, pageIndex);
+        setStatus("A editar texto — escreva o novo valor.");
+        window.setTimeout(() => setStatus(null), 3000);
       };
 
       const handleMouseDown = (opt: TPointerEventInfo<TPointerEvent>) => {
@@ -225,45 +227,8 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
       canvas.on("object:added", () => history.record());
       canvas.on("object:removed", () => history.record());
 
-      history.beginSuppress();
-      try {
-        const { objects, usedOcr } = await rebuildEditableTextLayer(
-          page,
-          bg,
-          (msg) => {
-            if (!cancelled) setStatus(msg);
-          }
-        );
-        if (cancelled) return;
-        for (const obj of objects) canvas.add(obj);
-
-        const bytes = useEditorStore.getState().pdfBytes;
-        if (bytes) {
-          const forms = await extractFormFields(
-            bytes,
-            pageIndex,
-            width,
-            height
-          );
-          if (cancelled) return;
-          for (const obj of forms) canvas.add(obj);
-        }
-        canvas.requestRenderAll();
-        setStatus(
-          usedOcr
-            ? "Editable text ready (OCR + bold detection). Click any text to edit."
-            : "Editable text ready. Click any text to edit; use Erase for images/shapes."
-        );
-        window.setTimeout(() => {
-          if (!cancelled) setStatus(null);
-        }, 5000);
-      } catch (err) {
-        console.warn("Content rebuild failed", err);
-        setStatus("Could not rebuild text — use Erase / add Text manually.");
-      } finally {
-        history.endSuppress();
-        if (!cancelled) history.record();
-      }
+      history.record();
+      setStatus(null);
     })();
 
     return () => {
@@ -274,8 +239,53 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
         canvas.dispose();
       }
       fabricRef.current = null;
+      hitsLoadedForToken.current = 0;
     };
-  }, [pdfDoc, pageIndex, designW, designH, width, height]);
+  }, [pdfDoc, pageIndex, designW, designH]);
+
+  // Optional: detect text regions when the user clicks "Detetar texto".
+  useEffect(() => {
+    if (!textDetectToken || !pdfDoc) return;
+    if (hitsLoadedForToken.current === textDetectToken) return;
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+
+    let cancelled = false;
+    (async () => {
+      setStatus("A detetar texto…");
+      try {
+        const page = await pdfDoc.getPage(pageIndex + 1);
+        if (cancelled) return;
+        // Remove previous hit boxes only.
+        const prev = canvas
+          .getObjects()
+          .filter((o) => getContentKind(o) === "pdfTextHit");
+        if (prev.length) canvas.remove(...prev);
+
+        history.beginSuppress();
+        const hits = await createTextHitBoxes(page);
+        if (cancelled) return;
+        for (const h of hits) canvas.add(h);
+        canvas.requestRenderAll();
+        history.endSuppress();
+        history.record();
+        hitsLoadedForToken.current = textDetectToken;
+        setStatus(
+          "Texto detetado. Duplo-clique numa zona azul para editar. Use Apagar para imagens/linhas."
+        );
+        window.setTimeout(() => {
+          if (!cancelled) setStatus(null);
+        }, 6000);
+      } catch (err) {
+        console.warn(err);
+        setStatus("Falha ao detetar texto.");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [textDetectToken, pdfDoc, pageIndex]);
 
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
@@ -305,10 +315,10 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
       style={{ width: designW * zoom, height: designH * zoom }}
     >
       <div className="absolute left-1 -top-5 text-xs text-neutral-500 select-none">
-        Page {pageIndex + 1}
+        Página {pageIndex + 1}
       </div>
       {status && (
-        <div className="absolute left-1/2 -translate-x-1/2 -top-5 z-10 px-3 py-1 rounded-full bg-panelalt border border-edge text-[11px] text-accent whitespace-nowrap shadow">
+        <div className="absolute left-1/2 -translate-x-1/2 -top-5 z-10 px-3 py-1 rounded-full bg-panelalt border border-edge text-[11px] text-accent whitespace-nowrap shadow max-w-[90vw] overflow-hidden text-ellipsis">
           {status}
         </div>
       )}

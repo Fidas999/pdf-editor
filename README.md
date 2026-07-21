@@ -17,19 +17,12 @@ file, and multi-page exports larger than **1MB** are packed into a ZIP.
 - Zoom in / out from the toolbar.
 
 ### Edit existing PDF content
-- **Full text rebuild** — on open, original text is covered and replaced by
-  editable text boxes so you can change the document for real (not only draw
-  on top).
-- **Style matching** — font size, bold, and italic are detected from the PDF
-  font name when available; Bold/Italic toggles are in the Properties panel.
-- **OCR fallback** — if the PDF uses broken/custom encodings (garbled extract),
-  the app OCRs the rendered page (Portuguese + English) and estimates bold from
-  ink density. First OCR on a page can take a few seconds.
-- **Delete text** — removing a text box leaves a white cover so the original
-  does not return.
-- **Erase tool** — cover remaining background shapes, logos, barcodes or images.
-- **Form fields** — AcroForm text fields become editable when present.
-- **Add new content** — text, shapes, table, image.
+- The PDF opens with its **original look** (no automatic rebuild that breaks layout).
+- **Erase** — cover text, lines, logos or images you want removed.
+- **Detetar texto** — optional: shows faint selectable regions; **double-click** one
+  to edit that area (white cover + editable text with bold/size when available).
+- Add new text, shapes, tables and images on top.
+- Export as PDF (per page), PNG or JPEG (ZIP if total &gt; 1MB).
 
 ### Editing tools
 - **Select** — click and drag objects; multi-select with the selection box.
@@ -69,13 +62,12 @@ Edits, erasures and overlays are baked into every exported page.
 
 ## Important limitations
 
-- Logos, vector lines and barcodes stay on the PDF background until you
-  **Erase** them — only text is fully rebuilt as editable objects.
-- Style matching is heuristic (font names + ink density), not a generative AI
-  model. You can still toggle Bold/Italic manually.
-- OCR needs a network download of language data the first time (Tesseract).
-- Scanned image-only pages rely entirely on OCR quality.
-- Exported overlays are rasterized for WYSIWYG fidelity.
+- We keep the pdf.js render as the visual source of truth so certificates and
+  forms stay readable. Editing is overlay-based (erase + optional text regions).
+- Fully rewriting every PDF vector operator (true in-place object deletion) is
+  not reliable in the browser; Erase covers content visually in the export.
+- Some PDFs use custom encodings — extracted text may be wrong; retype after
+  double-click if needed.
 
 ## Tech stack
 
