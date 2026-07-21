@@ -5,6 +5,7 @@ import PdfPage from "./components/PdfPage";
 import { useEditorStore } from "./store/editorStore";
 import { useLoadPdf } from "./hooks/useLoadPdf";
 import { deleteActive } from "./lib/deleteActive";
+import { history } from "./lib/history";
 
 export default function App() {
   const pages = useEditorStore((s) => s.pages);
@@ -22,6 +23,19 @@ export default function App() {
         (target.tagName === "INPUT" ||
           target.tagName === "TEXTAREA" ||
           target.isContentEditable);
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) history.redo();
+        else history.undo();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        history.redo();
+        return;
+      }
+
       if (typing) return;
 
       if (e.key === "Delete" || e.key === "Backspace") {

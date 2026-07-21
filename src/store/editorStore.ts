@@ -42,6 +42,9 @@ interface EditorState {
 
   style: StyleDefaults;
 
+  canUndo: boolean;
+  canRedo: boolean;
+
   setDocument: (data: {
     fileName: string;
     pdfBytes: Uint8Array;
@@ -56,6 +59,7 @@ interface EditorState {
   setSelected: (obj: FabricObject | null, pageIndex: number | null) => void;
   bumpSelection: () => void;
   setStyle: (patch: Partial<StyleDefaults>) => void;
+  setHistoryFlags: (canUndo: boolean, canRedo: boolean) => void;
 }
 
 const defaultStyle: StyleDefaults = {
@@ -83,6 +87,9 @@ export const useEditorStore = create<EditorState>((set) => ({
   selectionVersion: 0,
 
   style: defaultStyle,
+
+  canUndo: false,
+  canRedo: false,
 
   setDocument: ({ fileName, pdfBytes, pdfDoc, pages }) =>
     set({
@@ -118,4 +125,5 @@ export const useEditorStore = create<EditorState>((set) => ({
   bumpSelection: () =>
     set((s) => ({ selectionVersion: s.selectionVersion + 1 })),
   setStyle: (patch) => set((s) => ({ style: { ...s.style, ...patch } })),
+  setHistoryFlags: (canUndo, canRedo) => set({ canUndo, canRedo }),
 }));

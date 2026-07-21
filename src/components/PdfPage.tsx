@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Canvas, FabricImage, type TPointerEventInfo, type TPointerEvent } from "fabric";
 import { DESIGN_SCALE } from "../lib/pdf";
 import { registerCanvas, unregisterCanvas } from "../lib/fabricRegistry";
+import { history } from "../lib/history";
 import { useEditorStore } from "../store/editorStore";
 import {
   createEllipse,
@@ -125,7 +126,15 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
       const s = useEditorStore.getState();
       if (s.selectedPage === pageIndex) s.setSelected(null, null);
     });
-    canvas.on("object:modified", () => useEditorStore.getState().bumpSelection());
+    canvas.on("object:modified", () => {
+      useEditorStore.getState().bumpSelection();
+      history.record();
+    });
+    canvas.on("object:added", () => history.record());
+    canvas.on("object:removed", () => history.record());
+
+    // Baseline snapshot for this (initially empty) page.
+    history.record();
 
     return () => {
       unregisterCanvas(pageIndex);

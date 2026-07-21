@@ -4,8 +4,10 @@ import { useEditorStore, type Tool } from "../store/editorStore";
 import { getCanvas } from "../lib/fabricRegistry";
 import { tag } from "../lib/createObject";
 import { downloadEditedPdf } from "../lib/exportPdf";
+import { exportPagesAsImages, type ImageFormat } from "../lib/exportImage";
 import { useLoadPdf } from "../hooks/useLoadPdf";
 import { deleteActive } from "../lib/deleteActive";
+import { history } from "../lib/history";
 
 interface ToolDef {
   id: Tool;
@@ -50,13 +52,18 @@ export default function Toolbar() {
   const pdfBytes = useEditorStore((s) => s.pdfBytes);
   const fileName = useEditorStore((s) => s.fileName);
   const pages = useEditorStore((s) => s.pages);
+  const canUndo = useEditorStore((s) => s.canUndo);
+  const canRedo = useEditorStore((s) => s.canRedo);
 
   const openInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const loadPdf = useLoadPdf();
   const [exporting, setExporting] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const hasDoc = !!pdfBytes;
+
+  const baseName = () => (fileName ?? "document.pdf").replace(/\.pdf$/i, "");
 
   const onSelectTool = (id: Tool) => {
     if (id === "image") {
@@ -88,12 +95,16 @@ export default function Toolbar() {
     setActiveTool("select");
   };
 
-  const onExport = async () => {
+  const onExport = async (format: "pdf" | ImageFormat) => {
     if (!pdfBytes) return;
+    setMenuOpen(false);
     setExporting(true);
     try {
-      const base = (fileName ?? "document.pdf").replace(/\.pdf$/i, "");
-      await downloadEditedPdf(pdfBytes, pages.length, `${base}-edited.pdf`);
+      if (format === "pdf") {
+        await downloadEditedPdf(pdfBytes, pages.length, `${baseName()}-edited.pdf`);
+      } else {
+        await exportPagesAsImages(format, `${baseName()}-edited`);
+      }
     } catch (err) {
       console.error(err);
       alert("Export failed. See console for details.");
@@ -169,6 +180,27 @@ export default function Toolbar() {
         }}
       />
 
+      <div className="w-px h-7 bg-edge mx-1" />
+
+      <div className={`flex items-center gap-1 ${hasDoc ? "" : "opacity-40 pointer-events-none"}`}>
+        <button
+          onClick={() => history.undo()}
+          disabled={!canUndo}
+          title="Undo (Ctrl+Z)"
+          className="w-8 h-8 grid place-items-center rounded-md bg-panelalt border border-edge hover:bg-edge disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {icon("M9 14L4 9l5-5", <path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5h-3" />)}
+        </button>
+        <button
+          onClick={() => history.redo()}
+          disabled={!canRedo}
+          title="Redo (Ctrl+Y)"
+          className="w-8 h-8 grid place-items-center rounded-md bg-panelalt border border-edge hover:bg-edge disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {icon("M15 14l5-5-5-5", <path d="M20 9H9a5 5 0 0 0-5 5v0a5 5 0 0 0 5 5h3" />)}
+        </button>
+      </div>
+
       <div className="flex-1" />
 
       <div className={`flex items-center gap-1 ${hasDoc ? "" : "opacity-40 pointer-events-none"}`}>
@@ -193,13 +225,53 @@ export default function Toolbar() {
 
       <div className="w-px h-7 bg-edge mx-1" />
 
-      <button
-        disabled={!hasDoc || exporting}
-        onClick={onExport}
-        className="px-4 py-1.5 rounded-md text-sm font-medium bg-accent hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed text-white"
-      >
-        {exporting ? "Exporting..." : "Export PDF"}
-      </button>
+      <div className="relative">
+        <button
+          disabled={!hasDoc || exporting}
+          onClick={() => setMenuOpen((o) => !o)}
+          className="px-4 py-1.5 rounded-md text-sm font-medium bg-accent hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed text-white flex items-center gap-1.5"
+        >
+          {exporting ? "Exporting..." : "Export"}
+          {!exporting && (
+            <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          )}
+        </button>
+        {menuOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-10"
+              onClick={() => setMenuOpen(false)}
+            />
+            <div className="absolute right-0 mt-1 w-44 z-20 rounded-md border border-edge bg-panelalt shadow-xl overflow-hidden">
+              <MenuItem label="PDF document" hint=".pdf" onClick={() => onExport("pdf")} />
+              <MenuItem label="PNG image" hint=".png" onClick={() => onExport("png")} />
+              <MenuItem label="JPEG image" hint=".jpg" onClick={() => onExport("jpeg")} />
+            </div>
+          </>
+        )}
+      </div>
     </div>
+  );
+}
+
+function MenuItem({
+  label,
+  hint,
+  onClick,
+}: {
+  label: string;
+  hint: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center justify-between px-3 py-2 text-sm text-neutral-200 hover:bg-accent hover:text-white"
+    >
+      <span>{label}</span>
+      <span className="text-xs opacity-60">{hint}</span>
+    </button>
   );
 }

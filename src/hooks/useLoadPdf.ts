@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { loadPdf } from "../lib/pdf";
 import { useEditorStore } from "../store/editorStore";
+import { history } from "../lib/history";
 
 export function useLoadPdf() {
   const setLoading = useEditorStore((s) => s.setLoading);
@@ -12,6 +13,7 @@ export function useLoadPdf() {
       try {
         const buffer = new Uint8Array(await file.arrayBuffer());
         const { doc, pages } = await loadPdf(buffer);
+        history.init(pages.length);
         setDocument({
           fileName: file.name,
           pdfBytes: buffer,

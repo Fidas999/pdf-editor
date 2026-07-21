@@ -15,11 +15,13 @@ lives on an editable overlay, so nothing in the original document is destroyed.
 - Add elements: text, square, rounded square, circle/ellipse, table, image.
 - Drag to move, corner handles to resize, top handle to rotate.
 - Multi-select and delete (Delete/Backspace or the toolbar button).
+- Undo / redo (toolbar buttons or Ctrl+Z / Ctrl+Y, Ctrl+Shift+Z to redo).
 - Edit properties: fill, border color, border width, corner radius, font
   size/color, table rows & columns, and opacity.
 - Import images via the toolbar or by dropping an image file onto a page.
 - Per-page overlays for multi-page documents.
-- Zoom in/out and export the edited document as a new PDF.
+- Zoom in/out and export as **PDF, PNG, or JPEG** (one image file per page for
+  multi-page documents).
 
 ## Tech stack
 
@@ -63,7 +65,9 @@ Each page is rendered by pdf.js into a background canvas. A transparent
 Fabric.js canvas of the same size sits on top and holds your editable objects.
 On export, every page's overlay is rendered at high resolution and stamped over
 the corresponding page of the original PDF with pdf-lib, producing a faithful,
-WYSIWYG result for shapes, tables, images and text.
+WYSIWYG result for shapes, tables, images and text. PNG/JPEG export instead
+re-renders each page background with pdf.js and composites the overlay on top,
+downloading one image per page.
 
 ## Notes
 
