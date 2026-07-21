@@ -4,6 +4,7 @@ dist-ssr
 *.local
 .DS_Store
 check.txt
+*.tsbuildinfo
 
 # Editor
 .vscode/*
