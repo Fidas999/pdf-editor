@@ -4,6 +4,7 @@ import type { StyleDefaults } from "../store/editorStore";
 export type ObjectKind =
   | "text"
   | "pdfText"
+  | "pdfTextHit"
   | "formField"
   | "erase"
   | "rect"

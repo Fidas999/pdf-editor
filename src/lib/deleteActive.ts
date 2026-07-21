@@ -27,7 +27,7 @@ export function deleteActive() {
 
   for (const obj of objects) {
     const kind = getContentKind(obj);
-    if (kind === "pdfText" || kind === "formField") {
+    if (kind === "pdfText" || kind === "formField" || kind === "pdfTextHit") {
       const erase = createEraseFromObject(obj);
       canvas.add(erase);
       // Move erase under remaining overlays so new drawings stay on top.

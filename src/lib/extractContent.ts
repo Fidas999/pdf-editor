@@ -1,4 +1,4 @@
-import { Rect, IText, type FabricObject } from "fabric";
+import { Rect, IText, type FabricObject, type Canvas } from "fabric";
 import { PDFDocument } from "pdf-lib";
 import type { PDFPageProxy } from "pdfjs-dist";
 import { pdfjsLib, DESIGN_SCALE } from "./pdf";
@@ -7,12 +7,18 @@ import { tag, type ObjectKind } from "./createObject";
 type Tagged = FabricObject & {
   kind?: ObjectKind;
   formName?: string;
+  extractedText?: string;
+  fontSizeHint?: number;
 };
 
 /**
- * Extract selectable/editable text from a pdf.js page into Fabric IText objects.
- * Each item gets a white background so the original glyphs are covered while
- * editing; deleting the object leaves an erase rect so the original stays gone.
+ * Extract text *regions* from a pdf.js page as nearly-invisible hit boxes.
+ *
+ * We deliberately do NOT paint the extracted strings over the page: many PDFs
+ * (insurance forms, etc.) use custom font encodings where getTextContent()
+ * returns wrong characters even though the page renders correctly. Covering
+ * the page with those strings looked like a "UTF-8 bug". Instead the user
+ * double-clicks a region to edit it.
  */
 export async function extractPageText(
   page: PDFPageProxy
@@ -35,28 +41,90 @@ export async function extractPageText(
     const m = pdfjsLib.Util.transform(viewport.transform, item.transform);
     const fontSize = Math.max(6, Math.hypot(m[2], m[3]));
     const scaleX = Math.hypot(m[0], m[1]);
-    const width = Math.max(fontSize * 0.4, (item.width || 0) * scaleX);
+    const width = Math.max(fontSize * 0.5, (item.width || 0) * scaleX);
+    const height = Math.max(fontSize * 0.9, fontSize);
     const left = m[4];
-    // m[5] is baseline; Fabric IText top is near the top of the em box.
     const top = m[5] - fontSize * 0.85;
 
-    const text = new IText(str, {
+    const hit = new Rect({
       left,
       top,
-      fontSize,
-      fill: "#111827",
-      fontFamily: "Helvetica, Arial, sans-serif",
-      backgroundColor: "#ffffff",
-      padding: 1,
+      width,
+      height,
+      // Almost invisible — original PDF stays visible underneath.
+      fill: "rgba(59, 130, 246, 0.04)",
+      stroke: "rgba(59, 130, 246, 0)",
+      strokeWidth: 1,
+      hoverCursor: "text",
     });
-    if (width > 0 && text.width && text.width < width * 0.85) {
-      text.set({ scaleX: width / text.width });
-    }
-    tag(text, "pdfText");
-    objects.push(text);
+    const tagged = hit as Tagged;
+    tagged.extractedText = str;
+    tagged.fontSizeHint = fontSize;
+    tag(hit, "pdfTextHit");
+    objects.push(hit);
   }
 
   return objects;
+}
+
+/**
+ * Turn a text hit-box into an editable IText with a white cover so the
+ * original glyphs disappear while the user types the replacement.
+ */
+export function activatePdfTextHit(canvas: Canvas, hit: FabricObject): IText {
+  const bound = hit.getBoundingRect();
+  const tagged = hit as Tagged;
+  const fontSize = tagged.fontSizeHint ?? Math.max(10, bound.height * 0.7);
+  // Prefer empty string when extracted text looks like mojibake / tofu —
+  // user can type the correct value from what they see on the page.
+  const guess = tagged.extractedText ?? "";
+  const looksBroken = /[\uFFFD□]/.test(guess) || hasHeavyMojibake(guess);
+  const initial = looksBroken ? "" : guess;
+
+  const text = new IText(initial, {
+    left: bound.left,
+    top: bound.top,
+    fontSize,
+    fill: "#111827",
+    fontFamily: "Helvetica, Arial, sans-serif",
+    backgroundColor: "#ffffff",
+    padding: 1,
+  });
+  if (bound.width > 0) {
+    text.set({ width: bound.width });
+  }
+  tag(text, "pdfText");
+
+  canvas.remove(hit);
+  canvas.add(text);
+  canvas.setActiveObject(text);
+  canvas.requestRenderAll();
+
+  const editable = text as unknown as {
+    enterEditing: () => void;
+    selectAll: () => void;
+  };
+  editable.enterEditing();
+  if (initial) editable.selectAll();
+
+  return text;
+}
+
+/** Heuristic: lots of Latin-1 symbols / control-ish chars → bad extraction. */
+function hasHeavyMojibake(s: string): boolean {
+  if (s.length < 2) return false;
+  let weird = 0;
+  for (const ch of s) {
+    const code = ch.charCodeAt(0);
+    // Private use, replacement, or common mojibake punctuation blocks
+    if (
+      (code >= 0x80 && code <= 0xff && !/[àáâãäåèéêëìíîïòóôõöùúûüçñÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÇÑ]/.test(ch)) ||
+      (code >= 0x2000 && code <= 0x206f)
+    ) {
+      weird++;
+    }
+  }
+  return weird / s.length > 0.35;
 }
 
 /**

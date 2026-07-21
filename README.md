@@ -71,10 +71,14 @@ Edits, erasures and overlays are baked into every exported page.
 True “object-level” rewriting of every PDF vector/path is not reliably possible
 in a browser. This editor uses a practical hybrid:
 
-- Existing **text** is extracted for editing (coverage via white background).
-- Existing **shapes / images** are removed by **erasing** (white covers), not by
-  deleting the original PDF operators.
-- Complex or scanned (image-only) PDFs may have little or no extractable text.
+- Existing **text regions** are detected as faint selectable boxes. **Double-click**
+  a region to edit it. The page itself stays rendered correctly underneath.
+- Garbled extracted characters are usually **not a UTF-8 problem** — many PDFs
+  use custom font encodings without a usable Unicode map. The page can look
+  fine while raw text extraction is wrong; that is why we no longer paint
+  extracted strings over the page automatically.
+- Existing **shapes / images** are removed with the **Erase** tool (white covers).
+- Complex or scanned (image-only) PDFs may have little or no selectable text.
 - Exported overlays are rasterized for WYSIWYG fidelity.
 
 ## Tech stack

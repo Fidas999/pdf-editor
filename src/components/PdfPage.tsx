@@ -22,7 +22,9 @@ import {
   createEraseDraft,
   extractFormFields,
   extractPageText,
+  activatePdfTextHit,
   tagContent,
+  getContentKind,
 } from "../lib/extractContent";
 import type { RenderTask } from "pdfjs-dist";
 
@@ -88,7 +90,30 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
 
     const syncSelection = () => {
       const obj = canvas.getActiveObject() ?? null;
+      // Highlight text hit-boxes when selected so the user can see them.
+      for (const o of canvas.getObjects()) {
+        if (getContentKind(o) === "pdfTextHit") {
+          const selected = o === obj;
+          o.set({
+            stroke: selected ? "rgba(59, 130, 246, 0.9)" : "rgba(59, 130, 246, 0)",
+            fill: selected
+              ? "rgba(59, 130, 246, 0.12)"
+              : "rgba(59, 130, 246, 0.04)",
+          });
+        }
+      }
       useEditorStore.getState().setSelected(obj, obj ? pageIndex : null);
+      canvas.requestRenderAll();
+    };
+
+    const handleDblClick = () => {
+      const obj = canvas.getActiveObject();
+      if (!obj || getContentKind(obj) !== "pdfTextHit") return;
+      history.beginSuppress();
+      const text = activatePdfTextHit(canvas, obj);
+      history.endSuppress();
+      history.record();
+      useEditorStore.getState().setSelected(text, pageIndex);
     };
 
     const handleMouseDown = (opt: TPointerEventInfo<TPointerEvent>) => {
@@ -189,6 +214,7 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
     canvas.on("mouse:down", handleMouseDown);
     canvas.on("mouse:move", handleMouseMove);
     canvas.on("mouse:up", finishErase);
+    canvas.on("mouse:dblclick", handleDblClick);
     canvas.on("selection:created", syncSelection);
     canvas.on("selection:updated", syncSelection);
     canvas.on("selection:cleared", () => {

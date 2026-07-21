@@ -39,15 +39,17 @@ export default function PropertiesPanel() {
     return (
       <aside className="w-64 shrink-0 bg-panel border-l border-edge p-4 text-sm text-neutral-500">
         <h2 className="text-neutral-300 font-medium mb-2">Properties</h2>
-        Open a PDF to extract its text for editing. Use <span className="text-neutral-300">Erase</span> to
-        cover shapes, images or text. Delete extracted text to remove it and
-        keep the original covered.
+        Open a PDF to view it clearly. Click a faint text region, then
+        <span className="text-neutral-300"> double-click </span>
+        to edit that text. Use <span className="text-neutral-300">Erase</span> to
+        cover shapes, images or leftover text.
       </aside>
     );
   }
 
   const kind = getKind(selected);
   const isText = kind === "text" || kind === "pdfText" || kind === "formField";
+  const isPdfHit = kind === "pdfTextHit";
   const isShape = kind === "rect" || kind === "roundRect" || kind === "ellipse";
   const isTable = kind === "table";
   const isErase = kind === "erase";
@@ -63,6 +65,14 @@ export default function PropertiesPanel() {
       </h2>
 
       <div className="flex flex-col gap-3">
+        {isPdfHit && (
+          <p className="text-xs text-neutral-400 leading-relaxed">
+            Text region detected on the PDF. <strong className="text-neutral-300">Double-click</strong> to
+            edit it (a white box appears so you can type the replacement).
+            Press Delete to erase this region.
+          </p>
+        )}
+
         {isText && (
           <>
             <Row label="Font size">

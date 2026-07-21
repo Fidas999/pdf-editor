@@ -13,6 +13,9 @@ export { pdfjsLib };
  */
 export const DESIGN_SCALE = 1.5;
 
+/** Keep in sync with the pdfjs-dist version in package.json. */
+const PDFJS_VERSION = "4.8.69";
+
 export interface PageInfo {
   /** width in PDF points (scale = 1) */
   width: number;
@@ -22,7 +25,15 @@ export interface PageInfo {
 
 export async function loadPdf(bytes: Uint8Array) {
   // pdf.js transfers/detaches the buffer, so hand it a copy.
-  const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+  // cMap + standardFontData improve glyph→Unicode mapping and substitute fonts.
+  // Note: many PDFs still use custom encodings without a ToUnicode map; those
+  // cannot be recovered as correct text (not a UTF-8 issue).
+  const doc = await pdfjsLib.getDocument({
+    data: bytes.slice(),
+    cMapUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/cmaps/`,
+    cMapPacked: true,
+    standardFontDataUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/standard_fonts/`,
+  }).promise;
   const pages: PageInfo[] = [];
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);

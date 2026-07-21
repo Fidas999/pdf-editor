@@ -3,7 +3,7 @@ import { getCanvas } from "./fabricRegistry";
 import { useEditorStore } from "../store/editorStore";
 
 /** Custom properties we persist so shapes/tables round-trip through JSON. */
-const EXTRA_PROPS = ["kind", "tableMeta", "formName"];
+const EXTRA_PROPS = ["kind", "tableMeta", "formName", "extractedText", "fontSizeHint"];
 const MAX_ENTRIES = 60;
 
 type SerializedObject = Record<string, unknown>;
@@ -122,10 +122,16 @@ function reviveCustomProps(serialized: SerializedObject, instance: object) {
     kind?: unknown;
     tableMeta?: unknown;
     formName?: unknown;
+    extractedText?: unknown;
+    fontSizeHint?: unknown;
   };
   if (serialized.kind !== undefined) obj.kind = serialized.kind;
   if (serialized.tableMeta !== undefined) obj.tableMeta = serialized.tableMeta;
   if (serialized.formName !== undefined) obj.formName = serialized.formName;
+  if (serialized.extractedText !== undefined)
+    obj.extractedText = serialized.extractedText;
+  if (serialized.fontSizeHint !== undefined)
+    obj.fontSizeHint = serialized.fontSizeHint;
 }
 
 export const history = new HistoryManager();
