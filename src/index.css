@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: #15161b;
+  color: #e6e7ea;
+  overflow: hidden;
+}
+
+/* Thin scrollbars for the page viewport */
+.thin-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: #3a3b45;
+  border-radius: 6px;
+}
+.thin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
