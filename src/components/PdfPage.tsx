@@ -1,5 +1,11 @@
 import { useEffect, useRef } from "react";
-import { Canvas, FabricImage, type TPointerEventInfo, type TPointerEvent } from "fabric";
+import {
+  Canvas,
+  FabricImage,
+  Rect,
+  type TPointerEventInfo,
+  type TPointerEvent,
+} from "fabric";
 import { DESIGN_SCALE } from "../lib/pdf";
 import { registerCanvas, unregisterCanvas } from "../lib/fabricRegistry";
 import { history } from "../lib/history";
@@ -12,6 +18,12 @@ import {
   createText,
   tag,
 } from "../lib/createObject";
+import {
+  createEraseDraft,
+  extractFormFields,
+  extractPageText,
+  tagContent,
+} from "../lib/extractContent";
 import type { RenderTask } from "pdfjs-dist";
 
 interface Props {
@@ -24,6 +36,8 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
   const bgRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<Canvas | null>(null);
+  const eraseDraft = useRef<Rect | null>(null);
+  const eraseOrigin = useRef<{ x: number; y: number } | null>(null);
 
   const zoom = useEditorStore((s) => s.zoom);
   const pdfDoc = useEditorStore((s) => s.pdfDoc);
@@ -80,6 +94,19 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
     const handleMouseDown = (opt: TPointerEventInfo<TPointerEvent>) => {
       useEditorStore.getState().setActivePage(pageIndex);
       const tool = useEditorStore.getState().activeTool;
+
+      if (tool === "erase") {
+        const p = canvas.getScenePoint(opt.e);
+        eraseOrigin.current = { x: p.x, y: p.y };
+        const draft = createEraseDraft(p.x, p.y);
+        eraseDraft.current = draft;
+        history.beginSuppress();
+        canvas.add(draft);
+        canvas.selection = false;
+        canvas.discardActiveObject();
+        return;
+      }
+
       if (tool === "select" || tool === "image") return;
 
       const p = canvas.getScenePoint(opt.e);
@@ -119,7 +146,49 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
       useEditorStore.getState().setSelected(obj, pageIndex);
     };
 
+    const handleMouseMove = (opt: TPointerEventInfo<TPointerEvent>) => {
+      const draft = eraseDraft.current;
+      const origin = eraseOrigin.current;
+      if (!draft || !origin) return;
+      const p = canvas.getScenePoint(opt.e);
+      const left = Math.min(origin.x, p.x);
+      const top = Math.min(origin.y, p.y);
+      const w = Math.abs(p.x - origin.x);
+      const h = Math.abs(p.y - origin.y);
+      draft.set({ left, top, width: Math.max(1, w), height: Math.max(1, h) });
+      draft.setCoords();
+      canvas.requestRenderAll();
+    };
+
+    const finishErase = () => {
+      const draft = eraseDraft.current;
+      if (!draft) return;
+      history.endSuppress();
+      const w = draft.width ?? 0;
+      const h = draft.height ?? 0;
+      if (w < 4 && h < 4) {
+        canvas.remove(draft);
+      } else {
+        draft.set({
+          stroke: "#e5e7eb",
+          strokeDashArray: undefined,
+          opacity: 1,
+          selectable: true,
+          evented: true,
+        });
+        tagContent(draft, "erase");
+        canvas.sendObjectToBack(draft);
+        history.record();
+      }
+      eraseDraft.current = null;
+      eraseOrigin.current = null;
+      canvas.selection = true;
+      canvas.requestRenderAll();
+    };
+
     canvas.on("mouse:down", handleMouseDown);
+    canvas.on("mouse:move", handleMouseMove);
+    canvas.on("mouse:up", finishErase);
     canvas.on("selection:created", syncSelection);
     canvas.on("selection:updated", syncSelection);
     canvas.on("selection:cleared", () => {
@@ -133,15 +202,46 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
     canvas.on("object:added", () => history.record());
     canvas.on("object:removed", () => history.record());
 
-    // Baseline snapshot for this (initially empty) page.
-    history.record();
+    // Load extracted PDF text + form fields as editable objects.
+    let cancelled = false;
+    (async () => {
+      const doc = useEditorStore.getState().pdfDoc;
+      const bytes = useEditorStore.getState().pdfBytes;
+      if (!doc) return;
+      history.beginSuppress();
+      try {
+        const page = await doc.getPage(pageIndex + 1);
+        if (cancelled) return;
+        const texts = await extractPageText(page);
+        if (cancelled) return;
+        for (const obj of texts) canvas.add(obj);
+
+        if (bytes) {
+          const forms = await extractFormFields(
+            bytes,
+            pageIndex,
+            width,
+            height
+          );
+          if (cancelled) return;
+          for (const obj of forms) canvas.add(obj);
+        }
+        canvas.requestRenderAll();
+      } catch (err) {
+        console.warn("Content extraction failed", err);
+      } finally {
+        history.endSuppress();
+        if (!cancelled) history.record();
+      }
+    })();
 
     return () => {
+      cancelled = true;
       unregisterCanvas(pageIndex);
       canvas.dispose();
       fabricRef.current = null;
     };
-  }, [pageIndex, designW, designH]);
+  }, [pageIndex, designW, designH, width, height]);
 
   // Accept image files dropped directly onto the page.
   const onDrop = async (e: React.DragEvent) => {

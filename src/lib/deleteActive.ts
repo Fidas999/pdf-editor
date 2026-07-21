@@ -1,10 +1,11 @@
 import { useEditorStore } from "../store/editorStore";
 import { getCanvas } from "./fabricRegistry";
+import { createEraseFromObject, getContentKind } from "./extractContent";
 
 /**
- * Remove the currently selected object(s) from whichever page holds the
- * selection. No-op while a text object is being edited so Backspace/Delete
- * still edits text rather than deleting the box.
+ * Remove the currently selected object(s). For extracted PDF text / form
+ * fields, leave a white erase rect behind so the original content stays
+ * covered after deletion. No-op while a text object is being edited.
  */
 export function deleteActive() {
   const { selectedPage } = useEditorStore.getState();
@@ -23,7 +24,18 @@ export function deleteActive() {
 
   const objects = canvas.getActiveObjects();
   if (objects.length === 0) return;
-  canvas.remove(...objects);
+
+  for (const obj of objects) {
+    const kind = getContentKind(obj);
+    if (kind === "pdfText" || kind === "formField") {
+      const erase = createEraseFromObject(obj);
+      canvas.add(erase);
+      // Move erase under remaining overlays so new drawings stay on top.
+      canvas.sendObjectToBack(erase);
+    }
+    canvas.remove(obj);
+  }
+
   canvas.discardActiveObject();
   canvas.requestRenderAll();
   useEditorStore.getState().setSelected(null, null);

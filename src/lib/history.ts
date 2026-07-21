@@ -3,7 +3,7 @@ import { getCanvas } from "./fabricRegistry";
 import { useEditorStore } from "../store/editorStore";
 
 /** Custom properties we persist so shapes/tables round-trip through JSON. */
-const EXTRA_PROPS = ["kind", "tableMeta"];
+const EXTRA_PROPS = ["kind", "tableMeta", "formName"];
 const MAX_ENTRIES = 60;
 
 type SerializedObject = Record<string, unknown>;
@@ -19,17 +19,28 @@ class HistoryManager {
   private index = -1;
   private pageCount = 0;
   private restoring = false;
+  /** While > 0, record() is a no-op (used during bulk content extraction). */
+  private suppressDepth = 0;
 
   init(pageCount: number) {
     this.entries = [];
     this.index = -1;
     this.pageCount = pageCount;
     this.restoring = false;
+    this.suppressDepth = 0;
     this.updateFlags();
   }
 
   get isRestoring() {
     return this.restoring;
+  }
+
+  beginSuppress() {
+    this.suppressDepth++;
+  }
+
+  endSuppress() {
+    this.suppressDepth = Math.max(0, this.suppressDepth - 1);
   }
 
   private serialize(): string {
@@ -50,7 +61,7 @@ class HistoryManager {
 
   /** Capture the current state as a new history step (no-op while restoring). */
   record() {
-    if (this.restoring) return;
+    if (this.restoring || this.suppressDepth > 0) return;
     const snapshot = this.serialize();
     if (this.index >= 0 && this.entries[this.index] === snapshot) return;
 
@@ -110,9 +121,11 @@ function reviveCustomProps(serialized: SerializedObject, instance: object) {
   const obj = instance as FabricObject & {
     kind?: unknown;
     tableMeta?: unknown;
+    formName?: unknown;
   };
   if (serialized.kind !== undefined) obj.kind = serialized.kind;
   if (serialized.tableMeta !== undefined) obj.tableMeta = serialized.tableMeta;
+  if (serialized.formName !== undefined) obj.formName = serialized.formName;
 }
 
 export const history = new HistoryManager();

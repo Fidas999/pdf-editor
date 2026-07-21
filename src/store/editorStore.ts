@@ -10,7 +10,8 @@ export type Tool =
   | "roundRect"
   | "ellipse"
   | "table"
-  | "image";
+  | "image"
+  | "erase";
 
 export interface StyleDefaults {
   fill: string;

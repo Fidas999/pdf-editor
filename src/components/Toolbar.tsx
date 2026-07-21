@@ -42,6 +42,11 @@ const TOOLS: ToolDef[] = [
     label: "Image",
     icon: icon("M4 5h16v14H4zM8 11l3 3 3-4 4 5", <circle cx="8.5" cy="8.5" r="1.4" />),
   },
+  {
+    id: "erase",
+    label: "Erase",
+    icon: icon("M4 16l8-8 4 4-8 8H4v-4zM14 6l4 4"),
+  },
 ];
 
 export default function Toolbar() {

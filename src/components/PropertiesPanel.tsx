@@ -39,16 +39,18 @@ export default function PropertiesPanel() {
     return (
       <aside className="w-64 shrink-0 bg-panel border-l border-edge p-4 text-sm text-neutral-500">
         <h2 className="text-neutral-300 font-medium mb-2">Properties</h2>
-        Select an object to edit its properties. Use the tools above to add
-        text, shapes, tables or images, then drag to reposition.
+        Open a PDF to extract its text for editing. Use <span className="text-neutral-300">Erase</span> to
+        cover shapes, images or text. Delete extracted text to remove it and
+        keep the original covered.
       </aside>
     );
   }
 
   const kind = getKind(selected);
-  const isText = kind === "text";
+  const isText = kind === "text" || kind === "pdfText" || kind === "formField";
   const isShape = kind === "rect" || kind === "roundRect" || kind === "ellipse";
   const isTable = kind === "table";
+  const isErase = kind === "erase";
 
   const fill = (selected.get("fill") as string) ?? "#000000";
   const stroke = (selected.get("stroke") as string) ?? "#000000";
@@ -145,6 +147,13 @@ export default function PropertiesPanel() {
               </Row>
             )}
           </>
+        )}
+
+        {isErase && (
+          <p className="text-xs text-neutral-400 leading-relaxed">
+            Erase region — a white cover over the original PDF. Resize or move
+            it; delete it to reveal the content underneath again.
+          </p>
         )}
 
         {isTable && (
