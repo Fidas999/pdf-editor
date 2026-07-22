@@ -1,5 +1,6 @@
 import { Rect, Ellipse, IText, Line, Group, type FabricObject } from "fabric";
 import type { StyleDefaults } from "../store/editorStore";
+import { findFontByCssFamily } from "./fontCatalog";
 
 export type ObjectKind =
   | "pageBase"
@@ -48,7 +49,9 @@ export function createText(x: number, y: number, style: StyleDefaults) {
     fill: style.textColor,
     fontFamily: style.fontFamily,
   });
-  return tag(t, "text");
+  const tagged = tag(t, "text") as FabricObject & { fontId?: string };
+  tagged.fontId = findFontByCssFamily(style.fontFamily)?.id ?? "helvetica";
+  return tagged;
 }
 
 export function createRect(x: number, y: number, style: StyleDefaults) {

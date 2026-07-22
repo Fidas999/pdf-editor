@@ -1,7 +1,13 @@
 /**
- * Heuristics for PDF / OCR text styling (bold, italic, family).
- * Not a full AI model — fast local checks from font names + pixel density.
+ * Font / style heuristics for PDF text import.
+ * Local matching against the font catalog + confidence scores.
  */
+
+import {
+  DEFAULT_FONT,
+  FONT_CATALOG,
+  type CatalogFont,
+} from "./fontCatalog";
 
 export interface TextStyle {
   fontSize: number;
@@ -9,41 +15,123 @@ export interface TextStyle {
   fontWeight: "normal" | "bold";
   fontStyle: "normal" | "italic";
   fill: string;
+  /** Catalog font id when matched. */
+  fontId?: string;
+  /** 0–1 local match confidence. */
+  confidence?: number;
+  /** Original PDF font name from pdf.js, if any. */
+  sourceFontName?: string;
 }
 
-const FAMILY_MAP: Array<{ test: RegExp; family: string }> = [
-  { test: /times|georgia|serif/i, family: "Times New Roman, Times, serif" },
-  { test: /courier|mono/i, family: "Courier New, Courier, monospace" },
-  { test: /helvetica|arial|sans|roboto|calibri|verdana/i, family: "Helvetica, Arial, sans-serif" },
-];
+export interface FontMatchResult {
+  font: CatalogFont;
+  confidence: number;
+  bold: boolean;
+  italic: boolean;
+  source: "alias" | "category" | "default";
+}
+
+const HIGH_CONFIDENCE = 0.78;
+
+export function isHighConfidence(confidence: number): boolean {
+  return confidence >= HIGH_CONFIDENCE;
+}
+
+export function matchFontLocally(
+  fontName: string | undefined
+): FontMatchResult {
+  const name = fontName ?? "";
+  const bold =
+    /bold|black|heavy|extrabold|demibold|semibold|bd\b/i.test(name);
+  const italic = /italic|oblique|\bit\b/i.test(name);
+
+  let best: { font: CatalogFont; confidence: number } | null = null;
+  for (const font of FONT_CATALOG) {
+    for (const alias of font.aliases) {
+      if (alias.test(name)) {
+        const confidence = font.aliasConfidence;
+        if (!best || confidence > best.confidence) {
+          best = { font, confidence };
+        }
+        break;
+      }
+    }
+  }
+
+  if (best) {
+    return {
+      font: best.font,
+      confidence: best.confidence,
+      bold,
+      italic,
+      source: "alias",
+    };
+  }
+
+  // Category guess from keywords when no alias hits
+  if (/serif|times|georgia|garamond|baskerville|roman/i.test(name)) {
+    const font =
+      FONT_CATALOG.find((f) => f.id === "times") ?? DEFAULT_FONT;
+    return {
+      font,
+      confidence: 0.55,
+      bold,
+      italic,
+      source: "category",
+    };
+  }
+  if (/mono|courier|console|code|typewriter/i.test(name)) {
+    const font =
+      FONT_CATALOG.find((f) => f.id === "courier") ?? DEFAULT_FONT;
+    return {
+      font,
+      confidence: 0.55,
+      bold,
+      italic,
+      source: "category",
+    };
+  }
+  if (/sans|gothic|grotesk|arial|helvetica|calibri|verdana/i.test(name)) {
+    const font =
+      FONT_CATALOG.find((f) => f.id === "helvetica") ?? DEFAULT_FONT;
+    return {
+      font,
+      confidence: 0.5,
+      bold,
+      italic,
+      source: "category",
+    };
+  }
+
+  return {
+    font: DEFAULT_FONT,
+    confidence: name ? 0.35 : 0.2,
+    bold,
+    italic,
+    source: "default",
+  };
+}
 
 export function styleFromFontName(
   fontName: string | undefined,
   fontSize: number
 ): TextStyle {
-  const name = fontName ?? "";
-  const bold =
-    /bold|black|heavy|extrabold|demibold|semibold|bd\b|heavy/i.test(name);
-  const italic = /italic|oblique|it\b|oblique/i.test(name);
-  let fontFamily = "Helvetica, Arial, sans-serif";
-  for (const m of FAMILY_MAP) {
-    if (m.test.test(name)) {
-      fontFamily = m.family;
-      break;
-    }
-  }
+  const match = matchFontLocally(fontName);
   return {
     fontSize: Math.max(6, fontSize),
-    fontFamily,
-    fontWeight: bold ? "bold" : "normal",
-    fontStyle: italic ? "italic" : "normal",
+    fontFamily: match.font.cssFamily,
+    fontWeight: match.bold ? "bold" : "normal",
+    fontStyle: match.italic ? "italic" : "normal",
     fill: "#111827",
+    fontId: match.font.id,
+    confidence: match.confidence,
+    sourceFontName: fontName,
   };
 }
 
 /**
  * Estimate whether a text patch on the rendered page looks bold by measuring
- * how "heavy" dark ink is inside the box (quick local "AI-like" check).
+ * how "heavy" dark ink is inside the box (quick local check).
  */
 export function estimateBoldFromPixels(
   ctx: CanvasRenderingContext2D,
@@ -81,7 +169,6 @@ export function estimateBoldFromPixels(
     }
   }
   if (ink < 8) return false;
-  // Bold text tends to have a higher share of very-dark pixels.
   return dark / ink > 0.42;
 }
 
@@ -111,8 +198,10 @@ export function textQualityScore(samples: string[]): number {
     const t = s.trim();
     if (!t) continue;
     if (/[\uFFFD□]/.test(t) || hasHeavyMojibake(t)) continue;
-    // Prefer tokens with mostly letters/digits/punctuation used in docs
-    if (/^[\wÀ-ÿ0-9\s.,;:/€$%ºª°'"()\-–—]+$/i.test(t) || /[A-Za-zÀ-ÿ]{2,}/.test(t)) {
+    if (
+      /^[\wÀ-ÿ0-9\s.,;:/€$%ºª°'"()\-–—]+$/i.test(t) ||
+      /[A-Za-zÀ-ÿ]{2,}/.test(t)
+    ) {
       good++;
     }
   }

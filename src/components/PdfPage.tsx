@@ -135,18 +135,38 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
                   bound.height
                 )
               : "";
+            const tagged = target as FabricObject & {
+              fontSizeHint?: number;
+              fontFamilyHint?: string;
+              fontWeightHint?: "normal" | "bold";
+              fontStyleHint?: "normal" | "italic";
+              fontId?: string;
+              fontConfidence?: number;
+              sourceFontName?: string;
+            };
             const fontHint =
-              (target as FabricObject & { fontSizeHint?: number })
-                .fontSizeHint ?? Math.max(10, bound.height * 0.75);
+              tagged.fontSizeHint ?? Math.max(10, bound.height * 0.75);
             const text = new IText(value || "", {
               left: bound.left,
               top: bound.top,
               fontSize: fontHint,
               fill: "#111827",
-              fontFamily: "Helvetica, Arial, sans-serif",
+              fontFamily:
+                tagged.fontFamilyHint ??
+                useEditorStore.getState().style.fontFamily,
+              fontWeight: tagged.fontWeightHint ?? "normal",
+              fontStyle: tagged.fontStyleHint ?? "normal",
               backgroundColor: "#ffffff",
             });
             tag(text, "pdfText");
+            const textMeta = text as FabricObject & {
+              fontId?: string;
+              fontConfidence?: number;
+              sourceFontName?: string;
+            };
+            textMeta.fontId = tagged.fontId;
+            textMeta.fontConfidence = tagged.fontConfidence;
+            textMeta.sourceFontName = tagged.sourceFontName;
             canvas!.remove(target);
             canvas!.add(text);
             canvas!.setActiveObject(text);

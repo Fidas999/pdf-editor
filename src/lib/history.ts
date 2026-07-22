@@ -12,6 +12,9 @@ const EXTRA_PROPS = [
   "fontWeightHint",
   "fontStyleHint",
   "fontFamilyHint",
+  "fontId",
+  "fontConfidence",
+  "sourceFontName",
   "textCrop",
 ];
 const MAX_ENTRIES = 60;
@@ -137,6 +140,9 @@ function reviveCustomProps(serialized: SerializedObject, instance: object) {
     fontWeightHint?: unknown;
     fontStyleHint?: unknown;
     fontFamilyHint?: unknown;
+    fontId?: unknown;
+    fontConfidence?: unknown;
+    sourceFontName?: unknown;
   };
   if (serialized.kind !== undefined) obj.kind = serialized.kind;
   if (serialized.tableMeta !== undefined) obj.tableMeta = serialized.tableMeta;
@@ -151,6 +157,11 @@ function reviveCustomProps(serialized: SerializedObject, instance: object) {
     obj.fontStyleHint = serialized.fontStyleHint;
   if (serialized.fontFamilyHint !== undefined)
     obj.fontFamilyHint = serialized.fontFamilyHint;
+  if (serialized.fontId !== undefined) obj.fontId = serialized.fontId;
+  if (serialized.fontConfidence !== undefined)
+    obj.fontConfidence = serialized.fontConfidence;
+  if (serialized.sourceFontName !== undefined)
+    obj.sourceFontName = serialized.sourceFontName;
 }
 
 export const history = new HistoryManager();

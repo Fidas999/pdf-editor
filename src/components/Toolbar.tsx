@@ -58,6 +58,7 @@ export default function Toolbar() {
   const fileName = useEditorStore((s) => s.fileName);
   const canUndo = useEditorStore((s) => s.canUndo);
   const canRedo = useEditorStore((s) => s.canRedo);
+  const reset = useEditorStore((s) => s.reset);
 
   const openInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -68,6 +69,10 @@ export default function Toolbar() {
   const hasDoc = !!pdfBytes;
 
   const baseName = () => (fileName ?? "document.pdf").replace(/\.pdf$/i, "");
+
+  const closeDocument = () => {
+    reset();
+  };
 
   const onSelectTool = (id: Tool) => {
     if (id === "image") {
@@ -123,7 +128,14 @@ export default function Toolbar() {
         <div className="w-7 h-7 rounded-md bg-accent grid place-items-center text-white font-bold">
           P
         </div>
-        <span className="font-semibold text-sm tracking-wide">PDF Editor</span>
+        <div className="flex flex-col leading-tight min-w-0">
+          <span className="font-semibold text-sm tracking-wide">PDF Editor</span>
+          {fileName && (
+            <span className="text-[10px] text-neutral-500 truncate max-w-[140px]" title={fileName}>
+              {fileName}
+            </span>
+          )}
+        </div>
       </div>
 
       <button
@@ -131,6 +143,13 @@ export default function Toolbar() {
         onClick={() => openInputRef.current?.click()}
       >
         Abrir PDF
+      </button>
+      <button
+        className="px-3 py-1.5 rounded-md text-sm bg-panelalt hover:bg-edge border border-edge"
+        onClick={closeDocument}
+        title="Fechar e voltar ao upload"
+      >
+        Novo
       </button>
       <input
         ref={openInputRef}
@@ -249,7 +268,7 @@ export default function Toolbar() {
               onClick={() => setMenuOpen(false)}
             />
             <div className="absolute right-0 mt-1 w-44 z-20 rounded-md border border-edge bg-panelalt shadow-xl overflow-hidden">
-              <MenuItem label="PDF (por página)" hint=".pdf / .zip" onClick={() => onExport("pdf")} />
+              <MenuItem label="PDF (texto vetorial)" hint=".pdf / .zip" onClick={() => onExport("pdf")} />
               <MenuItem label="Imagem PNG" hint=".png / .zip" onClick={() => onExport("png")} />
               <MenuItem label="Imagem JPEG" hint=".jpg / .zip" onClick={() => onExport("jpeg")} />
             </div>

@@ -23,7 +23,7 @@ export function useLoadPdf() {
       } catch (err) {
         console.error("Failed to load PDF", err);
         setLoading(false);
-        alert("Could not open that file. Please choose a valid PDF.");
+        alert("Não foi possível abrir esse ficheiro. Escolhe um PDF válido.");
       }
     },
     [setLoading, setDocument]

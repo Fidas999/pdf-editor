@@ -1,4 +1,5 @@
 import { Group, type FabricObject } from "fabric";
+import { useState } from "react";
 import { useEditorStore } from "../store/editorStore";
 import { getCanvas } from "../lib/fabricRegistry";
 import {
@@ -6,6 +7,9 @@ import {
   getTableMeta,
   rebuildTable,
 } from "../lib/createObject";
+import { FONT_CATALOG } from "../lib/fontCatalog";
+import { matchFont, isFontAiConfigured } from "../lib/matchFont";
+import { isHighConfidence } from "../lib/textStyle";
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -39,8 +43,8 @@ export default function PropertiesPanel() {
     return (
       <aside className="w-64 shrink-0 bg-panel border-l border-edge p-4 text-sm text-neutral-500">
         <h2 className="text-neutral-300 font-medium mb-2">Propriedades</h2>
-        Abra um PDF — o ficheiro é importado para um <span className="text-neutral-300">documento editável único</span> (sem layer por cima do PDF).
-        Edite texto (duplo-clique), linhas e imagens; ao exportar gera-se um <span className="text-neutral-300">PDF novo e plano</span>.
+        Seleciona um objeto na página. Usa a barra de tipografia para fonte,
+        tamanho e estilo. O layout das páginas do PDF mantém-se fixo.
       </aside>
     );
   }
@@ -76,6 +80,28 @@ export default function PropertiesPanel() {
 
         {isText && (
           <>
+            <Row label="Fonte">
+              <select
+                value={matchFontSelect(
+                  (selected.get("fontFamily") as string) ?? "Helvetica"
+                )}
+                onChange={(e) => {
+                  const font = FONT_CATALOG.find((f) => f.id === e.target.value);
+                  if (!font) return;
+                  update(selected, { fontFamily: font.cssFamily });
+                  (selected as FabricObject & { fontId?: string }).fontId =
+                    font.id;
+                  setStyle({ fontFamily: font.cssFamily });
+                }}
+                className="max-w-[120px] bg-panelalt border border-edge rounded px-1 py-1 text-xs"
+              >
+                {FONT_CATALOG.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </Row>
             <Row label="Font size">
               <input
                 type="number"
@@ -123,6 +149,7 @@ export default function PropertiesPanel() {
                 className="h-7 w-10 bg-transparent"
               />
             </Row>
+            <FontMatchInfo obj={selected} onApplied={rerender} />
           </>
         )}
 
@@ -302,4 +329,89 @@ function toHex(color: string): string {
   if (!ctx) return "#000000";
   ctx.fillStyle = color;
   return ctx.fillStyle.startsWith("#") ? ctx.fillStyle : "#000000";
+}
+
+function matchFontSelect(cssFamily: string): string {
+  const lower = cssFamily.toLowerCase();
+  const found = FONT_CATALOG.find(
+    (f) =>
+      f.cssFamily.toLowerCase() === lower ||
+      lower.includes(f.label.toLowerCase()) ||
+      (f.googleFamily && lower.includes(f.googleFamily.toLowerCase()))
+  );
+  return found?.id ?? FONT_CATALOG[0].id;
+}
+
+function FontMatchInfo({
+  obj,
+  onApplied,
+}: {
+  obj: FabricObject;
+  onApplied: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const meta = obj as FabricObject & {
+    fontConfidence?: number;
+    sourceFontName?: string;
+    fontId?: string;
+  };
+  const confidence = meta.fontConfidence;
+  const source = meta.sourceFontName;
+
+  const onSuggest = async () => {
+    setBusy(true);
+    try {
+      const result = await matchFont({
+        fontName: source,
+        forceAi: true,
+      });
+      obj.set({ fontFamily: result.primary.font.cssFamily });
+      meta.fontId = result.primary.font.id;
+      meta.fontConfidence = result.primary.confidence;
+      obj.setCoords();
+      onApplied();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-1 rounded-md border border-edge bg-panelalt/60 p-2 text-xs text-neutral-400 space-y-1.5">
+      {source && (
+        <div>
+          PDF:{" "}
+          <span className="text-neutral-300 break-all">{source}</span>
+        </div>
+      )}
+      {confidence != null && (
+        <div>
+          Confiança:{" "}
+          <span
+            className={
+              isHighConfidence(confidence)
+                ? "text-emerald-400"
+                : "text-amber-400"
+            }
+          >
+            {Math.round(confidence * 100)}%
+          </span>
+          {!isHighConfidence(confidence) && (
+            <span className="text-neutral-500"> (aproximada)</span>
+          )}
+        </div>
+      )}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={onSuggest}
+        className="w-full mt-1 px-2 py-1.5 rounded border border-edge bg-panel hover:bg-edge text-neutral-200 disabled:opacity-40"
+      >
+        {busy
+          ? "A identificar…"
+          : isFontAiConfigured()
+            ? "Identificar fonte (AI)"
+            : "Sugerir fonte"}
+      </button>
+    </div>
+  );
 }

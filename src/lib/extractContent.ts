@@ -20,6 +20,9 @@ type Tagged = FabricObject & {
   fontWeightHint?: "normal" | "bold";
   fontStyleHint?: "normal" | "italic";
   fontFamilyHint?: string;
+  fontId?: string;
+  fontConfidence?: number;
+  sourceFontName?: string;
 };
 
 export interface ExtractedItem {
@@ -187,6 +190,9 @@ export async function createTextHitBoxes(
     tagged.fontWeightHint = item.style.fontWeight;
     tagged.fontStyleHint = item.style.fontStyle;
     tagged.fontFamilyHint = item.style.fontFamily;
+    tagged.fontId = item.style.fontId;
+    tagged.fontConfidence = item.style.confidence;
+    tagged.sourceFontName = item.style.sourceFontName;
     tag(hit, "pdfTextHit");
     objects.push(hit);
   }
@@ -257,6 +263,11 @@ export async function activatePdfTextHit(
   });
   if (bound.width > 0) text.set({ width: bound.width });
   tag(text, "pdfText");
+  const textMeta = text as Tagged;
+  textMeta.fontId = tagged.fontId;
+  textMeta.fontConfidence = tagged.fontConfidence;
+  textMeta.sourceFontName = tagged.sourceFontName;
+  textMeta.fontFamilyHint = tagged.fontFamilyHint;
 
   canvas.remove(hit);
   canvas.add(cover);
@@ -544,6 +555,10 @@ export async function convertPageToEditable(
       backgroundColor: "#ffffff",
     });
     tag(text, "pdfText");
+    const textMeta = text as Tagged;
+    textMeta.fontId = item.style.fontId;
+    textMeta.fontConfidence = item.style.confidence;
+    textMeta.sourceFontName = item.style.sourceFontName;
     objects.push(cover, text);
   }
 

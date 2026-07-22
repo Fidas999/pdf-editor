@@ -72,7 +72,7 @@ const defaultStyle: StyleDefaults = {
   stroke: "#1e3a8a",
   strokeWidth: 2,
   fontSize: 24,
-  fontFamily: "Helvetica",
+  fontFamily: "Helvetica, Arial, sans-serif",
   textColor: "#111827",
 };
 

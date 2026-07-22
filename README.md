@@ -1,8 +1,8 @@
 # PDF Editor
 
-Editor de PDF no browser: importa o PDF para um **documento editável único**
-(sem layer por cima do PDF original). No fim exporta um **PDF novo e plano**,
-PNG ou JPEG.
+Editor de PDF no browser: importa o PDF para um **documento editável**
+com layout de páginas fixo (UX tipo Word). No fim exporta um **PDF novo**
+com fundo raster + **texto vetorial**.
 
 **Live demo:** https://fidas999.github.io/pdf-editor/
 
@@ -10,47 +10,59 @@ PNG ou JPEG.
 
 ## Ideia do produto
 
-Não convertas para Word. Abre o PDF, edita o conteúdo na própria superfície do
-documento e guarda o resultado. O export **não** carimba uma camada em cima do
-PDF antigo — gera um ficheiro novo a partir do que estás a ver no editor.
+Não convertas para Word com reflow. Abre o PDF, edita o conteúdo na própria
+superfície do documento (posições fixas) e guarda o resultado. O export
+gera um ficheiro novo a partir do que estás a ver no editor.
+
+## Fluxo
+
+1. **Upload** — escolhe ou arrasta um PDF
+2. **Editor** — tipografia, ferramentas, propriedades (vista separada no mesmo SPA)
+3. **Exportar** — PDF (texto vetorial), PNG ou JPEG
 
 ## Funcionalidades
 
 ### Abrir e navegar
 - Abrir PDF (clique ou drag & drop), multi-página
-- Zoom
+- Zoom, undo / redo
 
-### Edição (documento único)
-- Ao abrir, o PDF é **importado** para o editor (pdf.js só é usado off-screen)
-- Texto, linhas e imagens tornam-se objetos selecionáveis
-- Se a tipografia do PDF tiver codificação partida, o texto aparece como recorte
-  visual fiel — **duplo-clique** converte essa zona em texto editável (OCR local)
-- Ferramentas: texto, formas, tabela, imagem, apagar
-- Undo / redo (Ctrl+Z / Ctrl+Y)
-- Negrito / itálico / tamanho no painel de propriedades
+### Tipografia (tipo Word)
+- Ribbon: família, tamanho, negrito, itálico, cor, alinhamento
+- Matching local de fontes do PDF → catálogo (Inter, Roboto, Times, …)
+- Botão **Sugerir fonte** (local; AI se `VITE_FONT_AI_URL` estiver definida)
+- OCR local (Tesseract) em zonas com codificação partida
+
+### Edição
+- Texto, formas, tabela, imagem, apagar
+- Layout das páginas mantém-se
 
 ### Exportar
 | Formato | Resultado |
 |--------|-----------|
-| **PDF** | PDF **novo e plano**, uma página por ficheiro |
+| **PDF** | Fundo raster + texto vetorial embutido |
 | **PNG / JPEG** | Uma imagem por página |
 
-Se houver várias páginas e o total &gt; 1MB → ZIP.
+## Font AI (opcional)
+
+Define no `.env`:
+
+```
+VITE_FONT_AI_URL=https://seu-endpoint/match-font
+VITE_FONT_AI_KEY=opcional
+```
+
+O endpoint deve aceitar POST JSON `{ fontName, imageDataUrl, catalog, localHint }`
+e devolver `{ suggestions: [{ id, confidence, reason? }] }` com `id` do catálogo.
 
 ## Limitações
 
-- Em PDFs com fontes proprietárias, o texto editável após duplo-clique usa fontes
-  standard (Helvetica/Arial), não a fonte embutida original do PDF.
-- Reescrever o *content stream* interno do PDF original (como o Acrobat) não é
-  fiável no browser; por isso o fluxo é: **importar → editar documento → exportar PDF novo**.
+- Fontes proprietárias são **aproximadas** pelo catálogo (nunca 100% iguais sem a fonte original).
+- Reescrever o content stream interno do PDF original não é fiável no browser.
 
 ## Stack
 
 - Vite + React + TypeScript
-- pdf.js (importação off-screen)
-- Fabric.js (documento editável)
-- pdf-lib (PDF plano de saída)
-- JSZip, Tesseract.js (OCR pontual), Tailwind, Zustand
+- pdf.js, Fabric.js, pdf-lib, Tesseract.js, Zustand, Tailwind
 
 ## Desenvolvimento
 
