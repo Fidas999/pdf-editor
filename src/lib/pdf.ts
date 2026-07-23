@@ -13,8 +13,9 @@ export { pdfjsLib };
  */
 export const DESIGN_SCALE = 1.5;
 
-/** Keep in sync with the pdfjs-dist version in package.json. */
-const PDFJS_VERSION = "4.8.69";
+/** Keep in sync with the installed pdfjs-dist version. */
+const PDFJS_VERSION =
+  (pdfjsLib as { version?: string }).version ?? "4.10.38";
 
 export interface PageInfo {
   /** width in PDF points (scale = 1) */
