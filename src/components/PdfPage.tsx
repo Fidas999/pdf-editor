@@ -10,6 +10,10 @@ import {
 } from "fabric";
 import { DESIGN_SCALE } from "../lib/pdf";
 import { registerCanvas, unregisterCanvas } from "../lib/fabricRegistry";
+import {
+  setPageBitmap,
+  unregisterPageBitmap,
+} from "../lib/pageBitmap";
 import { history } from "../lib/history";
 import { useEditorStore } from "../store/editorStore";
 import {
@@ -38,17 +42,18 @@ interface Props {
 }
 
 /**
- * Single-surface page editor: the document IS the Fabric canvas.
- * pdf.js is only used off-screen to import a raster pageBase — that image
- * must stay visible. Editable text is activated on double-click (local whiteout).
+ * PDF preview = HTML <img> (always visible).
+ * Editing = Fabric canvas created on a plain DOM node React does NOT own,
+ * so Fabric's wrapper DOM mutations cannot crash React (insertBefore).
  */
 export default function PdfPage({ pageIndex, width, height }: Props) {
-  const hostRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const fabricRef = useRef<Canvas | null>(null);
   const snapRef = useRef<HTMLCanvasElement | null>(null);
   const eraseDraft = useRef<Rect | null>(null);
   const eraseOrigin = useRef<{ x: number; y: number } | null>(null);
   const [status, setStatus] = useState<string | null>("A importar página…");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const zoom = useEditorStore((s) => s.zoom);
   const pdfDoc = useEditorStore((s) => s.pdfDoc);
@@ -57,29 +62,28 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
   const designH = Math.round(height * DESIGN_SCALE);
 
   useEffect(() => {
-    if (!pdfDoc || !hostRef.current) return;
+    if (!pdfDoc || !containerRef.current) return;
     let cancelled = false;
     let task: RenderTask | null = null;
     let canvas: Canvas | null = null;
-    const host = hostRef.current;
+    const container = containerRef.current;
 
     (async () => {
       try {
         const page = await pdfDoc.getPage(pageIndex + 1);
-        if (cancelled || hostRef.current !== host) return;
+        if (cancelled || containerRef.current !== container) return;
 
         const viewport = page.getViewport({ scale: DESIGN_SCALE });
         const off = document.createElement("canvas");
-        off.width = Math.round(viewport.width);
-        off.height = Math.round(viewport.height);
-        const offCtx = off.getContext("2d");
+        off.width = Math.max(1, Math.round(viewport.width));
+        off.height = Math.max(1, Math.round(viewport.height));
+        const offCtx = off.getContext("2d", { willReadFrequently: true });
         if (!offCtx) {
           setStatus("Não foi possível criar o canvas de renderização.");
           return;
         }
 
         setStatus("A ler o PDF…");
-        // White background so transparent PDFs don't look empty/black.
         offCtx.fillStyle = "#ffffff";
         offCtx.fillRect(0, 0, off.width, off.height);
 
@@ -96,11 +100,22 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
           setStatus("Falha ao desenhar a página do PDF.");
           return;
         }
-        if (cancelled || hostRef.current !== host) return;
+        if (cancelled || containerRef.current !== container) return;
+
+        let url: string;
+        try {
+          url = off.toDataURL("image/png");
+        } catch (err) {
+          console.error("toDataURL failed", err);
+          setStatus("Não foi possível capturar a página renderizada.");
+          return;
+        }
 
         snapRef.current = off;
+        setPageBitmap(pageIndex, off);
+        setPreviewUrl(url);
 
-        // Dispose any leftover Fabric instance on this DOM node (StrictMode).
+        // Dispose previous Fabric instance if any.
         if (fabricRef.current) {
           try {
             fabricRef.current.dispose();
@@ -110,40 +125,32 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
           fabricRef.current = null;
         }
 
-        canvas = new Canvas(host, {
+        // Fabric must own this <canvas> — never let React reconcile it.
+        container.innerHTML = "";
+        const el = document.createElement("canvas");
+        container.appendChild(el);
+
+        canvas = new Canvas(el, {
           width: designW,
           height: designH,
-          backgroundColor: "#ffffff",
+          backgroundColor: "transparent",
           preserveObjectStacking: true,
           selection: true,
         });
+        const wrapper = canvas.wrapperEl;
+        if (wrapper) {
+          wrapper.style.position = "absolute";
+          wrapper.style.left = "0";
+          wrapper.style.top = "0";
+          wrapper.style.width = `${designW}px`;
+          wrapper.style.height = `${designH}px`;
+          wrapper.style.background = "transparent";
+        }
         fabricRef.current = canvas;
         registerCanvas(pageIndex, canvas);
 
-        const pageBase = await FabricImage.fromURL(off.toDataURL("image/png"));
-        if (cancelled || hostRef.current !== host) {
-          canvas.dispose();
-          canvas = null;
-          fabricRef.current = null;
-          return;
-        }
-
-        pageBase.set({
-          left: 0,
-          top: 0,
-          selectable: false,
-          evented: false,
-          hoverCursor: "default",
-        });
-        tag(pageBase, "pageBase");
-
         const syncSelection = () => {
           const obj = canvas!.getActiveObject() ?? null;
-          if (obj && getContentKind(obj) === "pageBase") {
-            canvas!.discardActiveObject();
-            useEditorStore.getState().setSelected(null, null);
-            return;
-          }
           useEditorStore.getState().setSelected(obj, obj ? pageIndex : null);
         };
 
@@ -301,11 +308,9 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
           const origin = eraseOrigin.current;
           if (!draft || !origin) return;
           const p = canvas!.getScenePoint(opt.e);
-          const left = Math.min(origin.x, p.x);
-          const top = Math.min(origin.y, p.y);
           draft.set({
-            left,
-            top,
+            left: Math.min(origin.x, p.x),
+            top: Math.min(origin.y, p.y),
             width: Math.max(1, Math.abs(p.x - origin.x)),
             height: Math.max(1, Math.abs(p.y - origin.y)),
           });
@@ -357,39 +362,22 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
 
         history.beginSuppress();
         try {
-          // Always show the rendered PDF first — never leave a blank white page.
-          canvas.add(pageBase);
-          canvas.sendObjectToBack(pageBase);
-          canvas.requestRenderAll();
-          setStatus("Página carregada. A preparar edição…");
-
-          const { objects, usedCrops } = await convertPageToEditable(
-            page,
-            off,
-            (msg) => {
-              if (!cancelled) setStatus(msg);
-            }
-          );
-          if (cancelled || hostRef.current !== host) return;
+          setStatus("Página visível. A preparar edição…");
+          const { objects } = await convertPageToEditable(page, off, (msg) => {
+            if (!cancelled) setStatus(msg);
+          });
+          if (cancelled || containerRef.current !== container) return;
 
           for (const o of objects) canvas.add(o);
-          canvas.sendObjectToBack(pageBase);
           canvas.requestRenderAll();
 
-          setStatus(
-            usedCrops
-              ? "Documento carregado. Duplo-clique no texto para editar."
-              : "Documento carregado. Duplo-clique no texto para editar."
-          );
+          setStatus("Documento carregado. Duplo-clique no texto para editar.");
           window.setTimeout(() => {
             if (!cancelled) setStatus(null);
           }, 5000);
         } catch (err) {
           console.warn(err);
-          // pageBase is already on canvas — user can still see and annotate.
-          setStatus(
-            "Página visível. A preparação de texto falhou — podes usar Apagar/Texto."
-          );
+          setStatus("Página visível. Preparação de texto falhou — usa Texto/Apagar.");
           window.setTimeout(() => {
             if (!cancelled) setStatus(null);
           }, 5000);
@@ -400,7 +388,11 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
       } catch (err) {
         if (!cancelled) {
           console.error(err);
-          setStatus("Erro ao abrir esta página do PDF.");
+          setStatus(
+            err instanceof Error
+              ? err.message
+              : "Erro ao abrir esta página do PDF."
+          );
         }
       }
     })();
@@ -413,6 +405,7 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
         /* ignore */
       }
       unregisterCanvas(pageIndex);
+      unregisterPageBitmap(pageIndex);
       if (fabricRef.current) {
         try {
           fabricRef.current.dispose();
@@ -427,6 +420,7 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
           /* ignore */
         }
       }
+      if (container) container.innerHTML = "";
       snapRef.current = null;
     };
   }, [pdfDoc, pageIndex, designW, designH]);
@@ -467,6 +461,7 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
         </div>
       )}
       <div
+        className="relative bg-white overflow-hidden"
         style={{
           width: designW,
           height: designH,
@@ -476,7 +471,26 @@ export default function PdfPage({ pageIndex, width, height }: Props) {
         onDrop={onDrop}
         onDragOver={(e) => e.preventDefault()}
       >
-        <canvas ref={hostRef} className="block bg-white" />
+        {previewUrl ? (
+          <img
+            src={previewUrl}
+            alt={`Página ${pageIndex + 1}`}
+            className="absolute inset-0 block pointer-events-none select-none"
+            width={designW}
+            height={designH}
+            draggable={false}
+          />
+        ) : (
+          <div className="absolute inset-0 grid place-items-center text-neutral-400 text-sm bg-white">
+            A renderizar…
+          </div>
+        )}
+        {/* Fabric mounts its own canvas inside — React must not own those nodes */}
+        <div
+          ref={containerRef}
+          className="absolute inset-0"
+          style={{ width: designW, height: designH }}
+        />
       </div>
     </div>
   );

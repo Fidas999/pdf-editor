@@ -71,6 +71,7 @@ export default function Toolbar() {
   const baseName = () => (fileName ?? "document.pdf").replace(/\.pdf$/i, "");
 
   const closeDocument = () => {
+    history.init(0);
     reset();
   };
 

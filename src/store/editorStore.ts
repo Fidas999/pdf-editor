@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { FabricObject } from "fabric";
 import type { PageInfo } from "../lib/pdf";
+import { clearPageBitmaps } from "../lib/pageBitmap";
 
 export type Tool =
   | "select"
@@ -109,7 +110,8 @@ export const useEditorStore = create<EditorState>((set) => ({
       selectedPage: null,
       textDetectToken: 0,
     }),
-  reset: () =>
+  reset: () => {
+    clearPageBitmaps();
     set({
       fileName: null,
       pdfBytes: null,
@@ -120,7 +122,8 @@ export const useEditorStore = create<EditorState>((set) => ({
       activeTool: "select",
       zoom: 1,
       textDetectToken: 0,
-    }),
+    });
+  },
   setLoading: (loading) => set({ loading }),
   setZoom: (zoom) => set({ zoom: Math.min(4, Math.max(0.25, zoom)) }),
   setActiveTool: (activeTool) => set({ activeTool }),

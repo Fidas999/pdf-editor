@@ -1,5 +1,5 @@
 import * as pdfjsLib from "pdfjs-dist";
-// Vite resolves this to a hashed URL for the worker bundle.
+// Vite resolves this to a hashed URL under the app base (e.g. /pdf-editor/assets/...).
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -27,13 +27,12 @@ export interface PageInfo {
 export async function loadPdf(bytes: Uint8Array) {
   // pdf.js transfers/detaches the buffer, so hand it a copy.
   // cMap + standardFontData improve glyph→Unicode mapping and substitute fonts.
-  // Note: many PDFs still use custom encodings without a ToUnicode map; those
-  // cannot be recovered as correct text (not a UTF-8 issue).
   const doc = await pdfjsLib.getDocument({
     data: bytes.slice(),
     cMapUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/cmaps/`,
     cMapPacked: true,
     standardFontDataUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/standard_fonts/`,
+    useSystemFonts: true,
   }).promise;
   const pages: PageInfo[] = [];
   for (let i = 1; i <= doc.numPages; i++) {

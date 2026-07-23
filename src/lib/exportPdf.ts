@@ -17,6 +17,7 @@ import {
   type CatalogFont,
   type PdfStandardFont,
 } from "./fontCatalog";
+import { compositePageToDataUrl } from "./pageBitmap";
 
 /** Extra resolution when flattening non-text layers into the output PDF. */
 const EXPORT_MULTIPLIER = 2;
@@ -37,8 +38,7 @@ interface TextExportItem {
 }
 
 /**
- * Build a hybrid PDF: raster page without editable text, then vector text
- * drawn with embedded / standard fonts via pdf-lib.
+ * Build a hybrid PDF: raster page (bitmap + overlays without text) + vector text.
  */
 export async function buildFlatPdf(): Promise<Uint8Array> {
   const { pages } = useEditorStore.getState();
@@ -60,7 +60,6 @@ export async function buildFlatPdf(): Promise<Uint8Array> {
 
     const textSnapshot: TextExportItem[] = textObjs.map((o) => snapshotText(o));
 
-    // Hide interactive overlays + editable text for clean raster background
     for (const h of hits) h.set({ visible: false });
     for (const t of textObjs) t.set({ visible: false });
 
@@ -68,10 +67,12 @@ export async function buildFlatPdf(): Promise<Uint8Array> {
     canvas.discardActiveObject();
     canvas.requestRenderAll();
 
-    const dataUrl = canvas.toDataURL({
-      format: "png",
-      multiplier: EXPORT_MULTIPLIER,
-    });
+    const dataUrl =
+      compositePageToDataUrl(i, canvas, EXPORT_MULTIPLIER) ??
+      canvas.toDataURL({
+        format: "png",
+        multiplier: EXPORT_MULTIPLIER,
+      });
 
     for (const h of hits) h.set({ visible: true });
     for (const t of textObjs) t.set({ visible: true });

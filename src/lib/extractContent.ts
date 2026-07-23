@@ -10,7 +10,6 @@ import {
   type TextStyle,
 } from "./textStyle";
 import { ocrRegion } from "./ocrPage";
-import { buildLineAndImageObjects } from "./extractPageObjects";
 
 type Tagged = FabricObject & {
   kind?: ObjectKind;
@@ -477,16 +476,8 @@ export async function convertPageToEditable(
   const quality = textQualityScore(raw.map((m) => m.text));
   const usedCrops = quality < 0.72 || !bgCanvas;
 
-  onStatus?.("A converter linhas e imagens…");
-  try {
-    const graphics = await buildLineAndImageObjects(page, {
-      addCovers: false,
-      thinLineCoversOnly: true,
-    });
-    objects.push(...graphics);
-  } catch (err) {
-    console.warn("Extração de linhas/imagens falhou", err);
-  }
+  // Do NOT re-draw lines/images on top of the HTML page preview — the raster
+  // already contains them. Overlays caused blank/duplicated visuals before.
 
   return { objects, usedCrops };
 }

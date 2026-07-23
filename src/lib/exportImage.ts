@@ -6,12 +6,12 @@ import {
   type NamedFile,
 } from "./download";
 import { getContentKind } from "./extractContent";
+import { compositePageToDataUrl } from "./pageBitmap";
 
 export type ImageFormat = "png" | "jpeg";
 
 /**
- * Export each editor page as PNG/JPEG from the Fabric document only
- * (flat WYSIWYG — no separate PDF background render).
+ * Export each editor page as PNG/JPEG: PDF raster + Fabric overlays.
  */
 export async function exportPagesAsImages(
   format: ImageFormat,
@@ -35,11 +35,27 @@ export async function exportPagesAsImages(
     canvas.discardActiveObject();
     canvas.requestRenderAll();
 
-    const dataUrl = canvas.toDataURL({
-      format: format === "png" ? "png" : "jpeg",
-      quality: 0.92,
-      multiplier: 2,
-    });
+    let dataUrl =
+      compositePageToDataUrl(i, canvas, 2) ??
+      canvas.toDataURL({
+        format: format === "png" ? "png" : "jpeg",
+        quality: 0.92,
+        multiplier: 2,
+      });
+
+    if (format === "jpeg" && dataUrl.startsWith("data:image/png")) {
+      const img = await createImageBitmap(await (await fetch(dataUrl)).blob());
+      const c = document.createElement("canvas");
+      c.width = img.width;
+      c.height = img.height;
+      const ctx = c.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0);
+        dataUrl = c.toDataURL("image/jpeg", 0.92);
+      }
+    }
 
     for (const h of hits) h.set({ visible: true });
     if (active) canvas.setActiveObject(active);
